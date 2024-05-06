@@ -1,0 +1,2221 @@
+---
+title: "updated_EII_scripts"
+author: "Sara-Jayne Thursby"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#from compendium_EII_scripts.R line 1669 section "what about varCpG?"
+#setwd("~/EII/EII")
+
+print(paste("Analyses done on", date()))
+
+```
+
+```{r include=TRUE}
+
+
+#load("compendium_EII_scripts_smaller_24Aug21.RData")
+
+library(dplyr)
+library(ggplot2)
+
+#### rmVar VarCpG/mhic functions --------------
+
+rmVar <- function(meltedData, mostVarCgid){
+  
+  #allBF.normalMelt = meltedData
+  #mostVarTumorCgid = mostVarCgid or equal
+  
+  meltedData %>%
+    filter(cgid %in% unique(mostVarCgid$cgid)) %>%
+    group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> a
+  
+  a <- na.omit(a)
+  
+  a <- a[a$numProbes >= 10,]
+  
+  a %>%
+    group_by(L1, variable) %>%
+    summarise(rmVar=sqrt(sum(varianceCGI/n()))) -> a
+  
+  return(a)
+}
+
+
+varCpG <- function(meltedDataNormal, meltedDataTumor, mostVarCgid){
+  
+  #allBF.normalMelt = meltedDataNormal
+  #mostVarTumorCgid = mostVarCgid or equal
+  
+  #tumorRmVar <- rmVar(meltedDataTumor, mostVarCgid)
+  
+  #normalRmVar <- rmVar(meltedDataNormal, mostVarCgid)
+  
+  meltedDataNormal %>%
+    filter(cgid %in% unique(mostVarCgid$cgid)) %>%
+    group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> a
+  
+  a <- na.omit(a)
+  
+  a <- a[a$numProbes >= 10,]
+  
+  a %>%
+    group_by(L1, variable) %>%
+    summarise(rmVar=sqrt(sum(varianceCGI/n()))) -> normalRmVar
+  
+  meltedDataTumor %>%
+    filter(cgid %in% unique(mostVarCgid$cgid)) %>%
+    group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> a
+  
+  a <- na.omit(a)
+  
+  a <- a[a$numProbes >= 10,]
+  
+  a %>%
+    group_by(L1, variable) %>%
+    summarise(rmVar=sqrt(sum(varianceCGI/n()))) -> tumorRmVar
+  
+  rbind(tumorRmVar, normalRmVar) -> result
+  
+  return(result)
+}
+
+mhic <- function(meltedDataNormal, meltedDataTumor, leastVarNormalCgid){
+  
+  meltedDataNormal %>%
+    filter(cgid %in% unique(leastVarNormalCgid$cgid)) %>%
+    group_by(L1, variable) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.2 & value <= 0.8) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm)) -> mhicNormal
+  
+  meltedDataTumor %>% 
+    filter(cgid %in% unique(leastVarNormalCgid$cgid)) %>%
+    group_by(L1, variable) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.2 & value <= 0.8) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm)) -> mhicTumor
+  
+  rbind(mhicNormal, mhicTumor) -> mhicAll
+  
+  return(mhicAll)
+}
+
+mhicv2 <- function(meltedDataNormal, meltedDataTumor, leastVarNormalCgid){
+  
+  meltedDataNormal %>%
+    filter(cgid %in% unique(leastVarNormalCgid$cgid)) %>%
+    group_by(L1, variable) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.3 & value <= 0.7) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm)) -> mhicNormal
+  
+  meltedDataTumor %>% 
+    filter(cgid %in% unique(leastVarNormalCgid$cgid)) %>%
+    group_by(L1, variable) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.3 & value <= 0.7) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm)) -> mhicTumor
+  
+  rbind(mhicNormal, mhicTumor) -> mhicAll
+  
+  return(mhicAll)
+}
+
+```
+
+```{r}
+#I'm taking the gene symbol column out of allx.normalMelt and allx.tumorMelt and allBF.normalMelt and allBF.tumorMelt - I think they are causing the same values to be repeated many times
+  
+  allx.normalMelt[,-5] -> allx.normalMelt2
+  distinct(allx.normalMelt2) -> allx.normalMelt2
+  
+  allx.tumorMelt[,-5] -> allx.tumorMelt2
+  distinct(allx.tumorMelt2) -> allx.tumorMelt2
+  
+  allBF.normalMelt[,-5] -> allBF.normalMelt2
+  distinct(allBF.normalMelt2) -> allBF.normalMelt2
+  
+  allBF.tumorMelt[,-5] -> allBF.tumorMelt2
+  distinct(allBF.tumorMelt2) -> allBF.tumorMelt2
+
+```
+
+
+
+```{r line 1669 - 1728}
+# what about VarCpG? ----
+
+rmVarByCGI2 <- varCpG(allx.normalMelt2, allx.tumorMelt2, leastVarTumorCgid)
+
+#need to do for normal to see what the deviation is -----
+
+
+ggplot(rmVarByCGI2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(color=L1)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("rmVarByCGI2_leastvartumorcgid")
+
+mhicByCGI2 <- mhic(allx.normalMelt2, allx.tumorMelt2, leastVarTumorCgid)
+
+ggplot(mhicByCGI2, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F)  + theme(axis.text.x = element_text(angle=90)) + ggtitle("leastVarTumorCgidMHIC2_Boxplot_with_Jitter")
+
+```
+
+```{r line 1730 - 1764}
+# what about the ones least variable in normal samples? and how does that compare to tumors? -----
+
+leastVarNormalCgidMHICall2 <- mhic(allx.normalMelt2, allx.tumorMelt2, leastVarNormalCgid)
+
+ggplot(leastVarNormalCgidMHICall2, aes(x=L1, y=percent,)) + geom_jitter(aes(colour=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("leastVarNormalCgidMHICall2")
+
+ggplot(leastVarNormalCgidMHICall, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90))+ ggtitle("leastVarNormalCgidMHICall_Boxplot")
+
+ggplot(leastVarNormalCgidMHICall, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F)  + theme(axis.text.x = element_text(angle=90)) + ggtitle("leastVarNormalCgidMHICall_Boxplot_with_Jitter")
+
+
+```
+
+```{r 1767 - 1805 }
+
+#leastVarNormalDerivedcgidVarCpG
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, leastVarNormalCgid) -> rmVarByCGIAll_normalDerived2
+
+ggplot(rmVarByCGIAll_normalDerived2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("rmVarByCGIAll_normalDerived2")
+
+```
+
+```{r 1888 - 1959}
+
+mhic(allx.normalMelt2, allx.tumorMelt2, mostVarNormalCgid) -> mostVarNormalCgidMHICall2
+
+ggplot(mostVarNormalCgidMHICall2, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVarNormalCgidMHICall2")
+
+ggplot(mostVarNormalCgidMHICall2, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVarNormalCgidMHICall2_Boxplot")
+
+ggplot(mostVarNormalCgidMHICall2, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVarNormalCgidMHICall2_Boxplot")
+
+# now for varCpG
+varCpG(allx.normalMelt2, allx.tumorMelt2, mostVarNormalCgid) -> mostrmVarByCGIAll_normalDerived2
+
+ggplot(mostrmVarByCGIAll_normalDerived2, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostrmVarByCGIAll_normalDerived2")
+
+ggplot(mostrmVarByCGIAll_normalDerived2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(color=L1)) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostrmVarByCGIAll_normalDerived2")
+
+
+```
+
+```{r 1960 - 2024 }
+
+#tumor derived most variable
+
+mhic(allx.normalMelt2, allx.tumorMelt2, mostVarTumorCgid) -> mostVarTumorCgidMHICall2
+
+ggplot(mostVarTumorCgidMHICall2, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVartumorCgidMHICall2")
+
+ggplot(mostVarTumorCgidMHICall2, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVartumorCgidMHICall2_Boxplot")
+
+ggplot(mostVarTumorCgidMHICall2, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVartumorCgidMHICall2_Boxplot_Jitter")
+
+# now for varCpG
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, mostVarTumorCgid) -> mostrmVarByCGIAll_TumorDerived2
+
+ggplot(mostrmVarByCGIAll_TumorDerived2, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostrmVarByCGIAll_TumorDerived2-boxplot")
+
+ggplot(mostrmVarByCGIAll_TumorDerived2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(color=L1)) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostrmVarByCGIAll_TumorDerived2-boxplot-jitter")
+
+##mean beta for mostVarTumorcgid-----
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% mostVarTumorCgid$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetaMostVarTumorCgid2
+
+ggplot(meanBetaMostVarTumorCgid2, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers (try2) in mostVarTumorCgid") 
+
+ggplot(meanBetaMostVarTumorCgid2, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers (try2) in mostVarTumorCgid") 
+
+```
+
+
+```{r 2656 - 2724 }
+
+# tumor derived most variable -----
+
+#sdTumorAllProbes %>%
+#  filter(sd > 0.05 ) -> mostVarTumorCgidAP
+
+mhic(allBF.normalMelt2, allBF.tumorMelt2, mostVarTumorCgidAP) -> mostVarTumorCgidMHICallAP2
+
+ggplot(mostVarTumorCgidMHICallAP2, aes(x=L1, y=percent, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("mostVarTumorCgidMHICallAP2")
+
+ggplot(mostVarTumorCgidMHICallAP2, aes(x=L1, y=percent, fill=L1)) + geom_boxplot(show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostVarTumorCgidMHICallAP2_boxplot")
+
+# now for varCpG
+
+varCpG(allBF.normalMelt2, allBF.tumorMelt2, mostVarTumorCgidAP) -> mostrmVarByCGIAll_TumorDerivedAP2
+
+ggplot(mostrmVarByCGIAll_TumorDerivedAP2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(color=L1), show.legend=F) + geom_boxplot() + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("mostrmVarByCGIAll_TumorDerivedAP2") #19698
+
+
+```
+
+
+```{r}
+#Random Forest for selection of the best mostvartumor probes-----
+
+#what I want to predict is L1. 
+#what I want to get is the most effective cgid from mostVarTumorCgid that can be used in VarCpG/Mhic to predict L1
+#need Boruta selection method based on Random Forest
+
+#need to do it for all tumors, like this:
+#allx.tumorMelt %>%
+#  filter(cgid %in% unique(leastVarTumorCgidAP$cgid)) %>%
+#  group_by(L1, variable, Arbitrary_CpGI_Name) %>% 
+#  summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> varByCGIAP
+
+allx.tumorMelt2 %>%
+  filter(cgid %in% unique(mostVarTumorCgid$cgid)) %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+  summarize(varianceCGI=var(value, na.rm=T), numProbes=n()) -> varByMostVarTumor2
+
+#remove whatever doesn't have 10 probes along it
+
+varByMostVarTumor2 %>%
+  filter(numProbes >=10) -> varByMostVarTumor2
+
+varByMostVarTumor2[,-5] -> varByMostVarTumor2
+
+#need to do the normals
+
+allx.normalMelt2 %>%
+  filter(cgid %in% unique(mostVarTumorCgid$cgid)) %>%
+    group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+      summarize(varianceCGI=var(value, na.rm=T), numProbes=n()) %>%
+        filter(numProbes >= 10) -> varByMostVarTNormals2
+
+varByMostVarTNormals2[,-5] -> varByMostVarTNormals2
+
+rbind(varByMostVarTNormals2, varByMostVarTumor2) -> varByMVT2
+
+
+dcast(varByMVT2, formula=variable+L1~Arbitrary_CpGI_Name) -> varMVT2
+
+#need to make the rownames = variable (i.e. samplename) and make L1 i.e. cancer type + normal/tumor status a factor
+
+row.names(varMVT2) <- varMVT2$variable
+
+varMVT2[,-1] -> varMVT2
+
+#I want to replace cancer type with normal or tumor for the selection method, I have a feeling 2 categories will perform better than 10
+varMVT2_2 <- varMVT2
+
+varMVT2_2$L1 <- ifelse(grepl(".normal", varMVT$L1), "normal", "tumor")
+
+colMeans(varMVT2_2[,-1]) -> gettingNA2
+
+names(na.omit(gettingNA2)) -> coveredCGI2
+
+c("L1", coveredCGI2) -> coveredCGI2
+
+varMVT2_2[, colnames(varMVT2_2) %in% coveredCGI2] -> varMVT3_2
+
+#L1 (normal/tumor) needs to be a factor, otherwise you get regression instead of classification
+
+varMVT3_2$L1 <- as.factor(varMVT3_2$L1)
+
+
+```
+
+```{r}
+#feature selection with the Boruta method -----
+library(Boruta)
+library(mlbench)
+library(caret)
+library(randomForest)
+
+
+set.seed(111)
+
+boruta2 <- Boruta(L1~., data=varMVT3_2, doTrace=2, maxRun=500)
+
+#doTrace =  reporting decision about each attribute as soon as it is justified + reporting each importance source run
+#maxRun = maximal number of importance source runs. You may increase it to resolve attributes left Tentative
+
+print(boruta2)
+
+#status of CGI can be obtained via attStats(boruta)
+
+attStats(boruta2) -> CGIstatus2
+
+CGIstatus2[CGIstatus2$decision=="Confirmed",] -> ConfirmedCGI2
+
+gsub("`", "", row.names(ConfirmedCGI2)) -> row.names(ConfirmedCGI2)
+
+#subset mostVarTum_probesGenesTable by confirmed CGI
+mostVarTum_ProbesGenesTable[mostVarTum_ProbesGenesTable$Arbitrary_CpGI_Name %in% row.names(ConfirmedCGI2),] -> MVT2_ProbesGenesTable2
+
+MVT2_ProbesGenesTable2$cgid <- MVT2_ProbesGenesTable2$ProbeName
+
+```
+
+```{r}
+#does it help with MHIC or rmVar or does it need more tuning?-----
+###
+mhic(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTable2) -> MVT2Mhic2
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTable2) -> MVT2RmVar2
+
+#plotting the new boruta selected mhic
+ggplot(MVT2Mhic2, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("MHIC - Boruta selected 228 CGI Boxplot Jitter-try2")
+
+#RmVar ??
+ggplot(MVT2RmVar2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("RmVar - Boruta selected 228 CGI Boxplot Jitter-try2") 
+
+```
+
+```{r}
+#if we increase the maxRuns we can get an answer on those attributes left tentative-----
+
+set.seed(111)
+
+boruta2_2 <- Boruta(L1~., data=varMVT3, doTrace=2, maxRun=1500)
+
+print(boruta2_2) #269 confirmed, 27 tentative 
+
+attStats(boruta2_2) -> CGIstatus2
+
+CGIstatus2[CGIstatus2$decision=="Confirmed",] -> ConfirmedCGI2
+
+gsub("`", "", row.names(ConfirmedCGI2)) -> row.names(ConfirmedCGI2)
+
+#subset mostVarTum_probesGenesTable by confirmed CGI
+mostVarTum_ProbesGenesTable[mostVarTum_ProbesGenesTable$Arbitrary_CpGI_Name %in% row.names(ConfirmedCGI2),] -> MVT2_ProbesGenesTable2
+
+MVT2_ProbesGenesTable2$cgid <- MVT2_ProbesGenesTable2$ProbeName
+
+```
+
+```{r}
+#make graphs with CGI from boruta2 features ----
+###
+mhic(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTable2) -> MVT2Mhic2_2
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTable2) -> MVT2RmVar2_2 
+
+#plotting the new boruta2 selected mhic
+ggplot(MVT2Mhic2_2, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("MHIC - Boruta selected 269 CGI Boxplot Jitter-try2")
+
+#RmVar ??
+ggplot(MVT2RmVar2_2, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("RmVar - Boruta selected 269 CGI Boxplot Jitter-try2") 
+
+#mhic stats 269----
+MVT2Mhic2_22 <- MVT2Mhic2_2
+ 
+gsub("x.*", "", MVT2Mhic2_22$L1) -> MVT2Mhic2_22$CancerType
+ 
+MVT2Mhic2_22 %>% group_by(CancerType) %>% wilcox_effsize(percent ~ L1)  #effect size
+
+MVT2Mhic2_22 %>% group_by(CancerType) %>% wilcox_test(percent ~ L1)  #p value
+
+
+
+#rmVar stats 269---
+MVT2Mhic2_22 <- MVT2Mhic2_2
+ 
+gsub("x.*", "", MVT2Mhic2_22$L1) -> MVT2Mhic2_22$CancerType
+ 
+MVT2Mhic2_22 %>% group_by(CancerType) %>% wilcox_effsize(percent ~ L1) 
+
+MVT2Mhic2_22 %>% group_by(CancerType) %>% wilcox_test(percent ~ L1) 
+
+
+```
+
+```{r}
+#I also need to do a boruta selection with all CGI and graph that----------
+#and compare it to my selection to make sure I didn't select bs
+
+
+allx.tumorMelt2 %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+  summarize(varianceCGI=var(value, na.rm=T), numProbes=n()) -> varByAllCGIT
+
+#remove whatever doesn't have 10 probes along it
+
+varByAllCGIT %>%
+  filter(numProbes >=10) -> varByAllCGIT
+
+varByAllCGIT[,-5] -> varByAllCGIT
+
+#need to do the normals
+
+allx.normalMelt2 %>%
+    group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+      summarize(varianceCGI=var(value, na.rm=T), numProbes=n()) %>%
+        filter(numProbes >= 10) -> varByAllCGIN
+
+varByAllCGIN[,-5] -> varByAllCGIN
+
+rbind(varByAllCGIN, varByAllCGIT) -> varByAllCGI
+
+
+dcast(varByAllCGI, formula=variable+L1~Arbitrary_CpGI_Name) -> varByAllCGIWide
+
+#need to make the rownames = variable (i.e. samplename) and make L1 i.e. cancer type + normal/tumor status a factor
+
+row.names(varByAllCGIWide) <- varByAllCGIWide$variable
+
+varByAllCGIWide[,-1] -> varByAllCGIWide
+
+#I want to replace cancer type with normal or tumor for the selection method, I have a feeling 2 categories will perform better than 10
+varByAllCGIWide2 <- varByAllCGIWide
+
+varByAllCGIWide2$L1 <- ifelse(grepl(".normal", varByAllCGIWide2$L1), "normal", "tumor")
+
+colMeans(varByAllCGIWide2[,-1]) -> gettingNA4
+
+names(na.omit(gettingNA2)) -> coveredCGI4
+
+c("L1", coveredCGI4) -> coveredCGI4
+
+varByAllCGIWide2[, colnames(varByAllCGIWide2) %in% coveredCGI2] -> varByAllCGIWide3
+
+#L1 (normal/tumor) needs to be a factor, otherwise you get regression instead of classification
+
+varByAllCGIWide3$L1 <- as.factor(varByAllCGIWide3$L1)
+
+```
+
+```{r}
+
+borutaAllCGI <- Boruta(L1~., data=varByAllCGIWide3, doTrace=2, maxRun=1500)
+
+#doTrace =  reporting decision about each attribute as soon as it is justified + reporting each importance source run
+#maxRun = maximal number of importance source runs. You may increase it to resolve attributes left Tentative
+
+print(borutaAllCGI)
+
+#status of CGI can be obtained via attStats(boruta)
+
+attStats(borutaAllCGI) -> CGIstatusAllCGI
+
+CGIstatusAllCGI[CGIstatusAllCGI$decision=="Confirmed",] -> ConfirmedCGIAllCGI
+
+gsub("`", "", row.names(ConfirmedCGIAllCGI)) -> row.names(ConfirmedCGIAllCGI)
+
+#subset mostVarTum_probesGenesTable by confirmed CGI
+mostVarTum_ProbesGenesTable[mostVarTum_ProbesGenesTable$Arbitrary_CpGI_Name %in% row.names(ConfirmedCGIAllCGI),] -> MVT2_ProbesGenesTableACGI # ac as in all CGI
+
+MVT2_ProbesGenesTableACGI$cgid <- MVT2_ProbesGenesTableACGI$ProbeName
+
+```
+
+```{r}
+#make graphs with CGI from borutaAllCGI features ----
+###
+mhic(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTableACGI) -> MVT2ACGIMhic
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, MVT2_ProbesGenesTableACGI) -> MVT2ACGIRmVar 
+
+#plotting the new boruta all CGI mhic
+ggplot(MVT2ACGIMhic, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=90)) + ggtitle("MHIC - Boruta selected CGI from all CGI available Boxplot Jitter-try2")
+
+#RmVar ??
+ggplot(MVT2ACGIRmVar, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=90)) + ggtitle("RmVar - Boruta selected CGI from all CGI available Boxplot Jitter-try2") 
+
+```
+```{r}
+#overlap between all CGI selected boruta CGI and most var boruta selected CGI----
+#nrow(ConfirmedCGI2) = 269, nrow(ConfirmedCGIAllCGI) = 240
+rownames(ConfirmedCGI2) %in% rownames(ConfirmedCGIAllCGI)
+
+rownames(ConfirmedCGI2)[rownames(ConfirmedCGI2) %in% rownames(ConfirmedCGIAllCGI)] #208 ConfirmedCGI2 also present in ConfirmedCGIAllCGI
+#208/240 = 86.7%
+
+```
+
+
+```{r}
+#need to double check mostvartumorderived mhic and rmvar----
+#what are the actual graphs, there have been so many, I get confused...
+
+mhic(allx.normalMelt2, allx.tumorMelt2, mostVarTumorCgid) -> MVTMhic_check
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, mostVarTumorCgid) -> MVTRmVar_check 
+
+#plotting mhic
+ggplot(MVTMhic_check, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC - most variable tumor dervied cgid - using allx.Melt2 Boxplot Jitter")
+
+#RmVar
+ggplot(MVTRmVar_check, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - most variable tumor dervied cgid - using allx.Melt2 Boxplot Jitter") 
+
+
+
+```
+
+```{r}
+#redoing median and mean beta for esBiv regions for figure 1------
+
+##mean beta for esBiv cgid-----
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetaEsBiv
+
+ggplot(meanBetaEsBiv, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in esBiv cgid") 
+
+ggplot(meanBetaEsBiv, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in esBiv Cgid") 
+
+ggplot(meanBetaEsBiv, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + ylim(0.00, 0.75) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in esBiv Cgid") 
+
+
+#stats for meanBetaEsBiv cgid -----
+#normals
+meanBetaEsBiv[meanBetaEsBiv$L1=="brcax.normal",3]
+
+#tumors
+meanBetaEsBiv[meanBetaEsBiv$L1=="brcax.tumor",3]
+
+wilcox.test(meanBetaEsBiv[meanBetaEsBiv$L1=="brcax.normal",3], meanBetaEsBiv[meanBetaEsBiv$L1=="brcax.tumor",3]) #sigh, too many values problem
+
+library(rstatix)
+
+meanBetaEsBiv %>% group_by(CancerType) %>% wilcox_effsize(meanBeta ~ L1) 
+
+meanBetaEsBiv %>% group_by(CancerType) %>% wilcox_test(meanBeta ~ L1) 
+
+
+##median beta for esBiv cgid-----
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(medianBeta=median(value)) -> medianBetaEsBiv
+
+ggplot(medianBetaEsBiv, aes(x=L1, y=medianBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Median Beta across TCGA cancers in esBiv cgid") 
+
+ggplot(medianBetaEsBiv, aes(x=L1, y=medianBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Median Beta across TCGA cancers in esBiv Cgid") 
+
+
+##mean beta for all cgid-----
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetaAllcgid
+
+ggplot(meanBetaAllcgid, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in all cgid") 
+
+ggplot(meanBetaAllcgid, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in all cgid") 
+
+##mean beta for mvt cgid-----
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% mostVarTumorCgid$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetaMVT
+
+ggplot(meanBetaMVT, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in most variable tumor cgid") 
+
+ggplot(meanBetaMVT, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in most variable tumor Cgid") 
+
+##mean beta for CGI cgid-----
+
+CpGI_ProbesGenesTable$cgid <- CpGI_ProbesGenesTable$ProbeName
+
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% CpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetaCGI
+
+ggplot(meanBetaCGI, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in CGI cgid") 
+
+ggplot(meanBetaCGI, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in CGI cgid") 
+
+
+
+```
+
+```{r}
+#checking mhic and rmvar for esbiv regions -----
+
+mhic(allx.normalMelt2, allx.tumorMelt2, esBivCpGI_ProbesGenesTable) -> esbivMhic_check
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, esBivCpGI_ProbesGenesTable) -> esbivRmVar_check 
+
+#plotting mhic
+ggplot(esbivMhic_check, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC -  esbiv cgid - using allx.Melt2 Boxplot")
+
+ggplot(esbivMhic_check, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC -  esbiv cgid - using allx.Melt2 Boxplot Jitter")
+
+#stats for esbivMhic_check----
+
+esbivMhic_check2 <- esbivMhic_check
+
+gsub("x.*", "", esbivMhic_check$L1) -> esbivMhic_check2$CancerType
+
+esbivMhic_check2 %>% group_by(CancerType) %>% wilcox_effsize(percent ~ L1) 
+
+esbivMhic_check2 %>% group_by(CancerType) %>% wilcox_test(percent ~ L1) 
+
+#mhicv2 methylation between 0.3 - 0.7
+mhicv2(allx.normalMelt2, allx.tumorMelt2, esBivCpGI_ProbesGenesTable) -> esbivMhicv2_check
+
+#plotting mhicv2
+ggplot(esbivMhicv2_check, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHICv2 (0.3-0.7) -  esbiv cgid - using allx.Melt2 Boxplot")
+
+
+#stats
+esbivMhicv2_check2 <- esbivMhicv2_check
+
+gsub("x.*", "", esbivMhicv2_check2$L1) -> esbivMhicv2_check2$CancerType
+
+esbivMhicv2_check2 %>% group_by(CancerType) %>% wilcox_effsize(percent ~ L1) 
+
+esbivMhicv2_check2 %>% group_by(CancerType) %>% wilcox_test(percent ~ L1) 
+
+
+#RmVar
+ggplot(esbivRmVar_check, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - esbiv cgid - using allx.Melt2 Boxplot")
+
+ggplot(esbivRmVar_check, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - esbiv cgid - using allx.Melt2 Boxplot Jitter") 
+
+#stats for esbivRmVar_check----
+
+esbivRmVar_check2 <- esbivRmVar_check
+
+gsub("x.*", "", esbivRmVar_check$L1) -> esbivRmVar_check2$CancerType
+
+esbivRmVar_check2 %>% group_by(CancerType) %>% wilcox_effsize(rmVar ~ L1) 
+
+esbivRmVar_check2 %>% group_by(CancerType) %>% wilcox_test(rmVar ~ L1) 
+
+#calculating median difference for mhic/rmvar ----
+
+#mhic first
+
+esbivMhic_check %>%
+  group_by(L1) %>%
+    summarise(medianPercent=median(percent)) -> medianDiff
+
+ggplot(medianDiff, aes(x=L1, y=medianPercent, fill=L1)) + geom_bar(stat="identity")
+
+esbivRmVar_check %>%
+  group_by(L1) %>%
+    summarise(medianRmVar=median(rmVar)) -> medianDiffRmvar
+
+ggplot(medianDiffRmvar, aes(x=L1, y=medianRmVar, fill=L1)) + geom_bar(stat="identity")
+
+
+
+```
+
+```{r}
+#checking limma mhic/rmvar/mean beta/median beta -------
+
+mhic(allx.normalMelt2, allx.tumorMelt2, limmacgids) -> limmaMhic_check
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, limmacgids) -> limmaRmVar_check 
+
+#plotting mhic
+ggplot(limmaMhic_check, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC - limma cgid - using allx.Melt2 Boxplot")
+
+ggplot(limmaMhic_check, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC -  limma cgid - using allx.Melt2 Boxplot Jitter")
+
+#RmVar
+ggplot(limmaRmVar_check, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - limma cgid - using allx.Melt2 Boxplot")
+
+ggplot(limmaRmVar_check, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - limma cgid - using allx.Melt2 Boxplot Jitter") 
+
+#mean beta
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% limmacgids$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(meanBeta=mean(value)) -> meanBetalimma
+
+ggplot(meanBetalimma, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in limma cgid") 
+
+ggplot(meanBetalimma, aes(x=L1, y=meanBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + ylim(0.00, 0.85) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in limma cgid") 
+
+ggplot(meanBetalimma, aes(x=L1, y=meanBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + ylim(0.00, 0.85) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in limma Cgid") 
+
+##median beta for limma cgid
+rbind(allx.normalMelt2, allx.tumorMelt2) %>%
+  filter(cgid %in% limmacgids$cgid) %>%
+    group_by(L1,variable) %>%
+      summarise(medianBeta=median(value)) -> medianBetalimma
+
+ggplot(medianBetalimma, aes(x=L1, y=medianBeta)) +  geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Median Beta across TCGA cancers in limma cgid") 
+
+ggplot(medianBetalimma, aes(x=L1, y=medianBeta)) + geom_jitter(aes(color=L1), show.legend = FALSE) + geom_boxplot(aes(fill=L1), show.legend = FALSE) + theme(legend.position="none", axis.text.x=element_text(angle=90)) + ggtitle("Median Beta across TCGA cancers in limma Cgid") 
+
+
+
+
+```
+
+
+```{r}
+#need to check sd across probes, across CGI and then across CGI ------
+#originally: SD calculated by cgid across samples within esBiv
+#by CGI: SD calculated by CGI between samples in esBiv
+#then do mHIC RMvar least variable normal CGI and most variable Tumor CGI
+
+allx.normalMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1, cgid) %>%
+      summarise(sd=sd(value), numValues=n(), medianMeth=median(value)) -> sdchecknormal #checked with allx.normalMelt2
+
+
+      
+allx.tumorMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+  group_by(L1, cgid) %>%
+  summarise(sd=sd(value), numValues=n(), medianMeth=median(value))  -> sdchecktumor #checked with all.tumorMelt2
+
+
+ggplot(data=sdchecknormal, aes(x=sd, fill=L1)) + geom_density()
+ggplot(data=sdchecktumor, aes(x=sd, fill=L1)) + geom_density()
+
+
+rm(sdchecknormal, sdchecktumor)
+
+#check sd across CGI, not just probes
+allx.normalMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1, Arbitrary_CpGI_Name) %>%
+      summarise(sd=sd(value), numValues=n(), medianMeth=median(value)) -> sdchecknormal #checked with allx.normalMelt2
+
+
+allx.tumorMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+  group_by(L1, Arbitrary_CpGI_Name) %>%
+  summarise(sd=sd(value), numValues=n(), medianMeth=median(value))  -> sdchecktumor #checked with all.tumorMelt2
+
+
+ggplot(data=sdchecknormal, aes(x=sd, fill=L1)) + geom_density() + coord_cartesian(xlim =c(0.0, 0.5)) + ggtitle("SD of EsBiv CGI across TCGA Normals in allx.normalMelt2")
+ggplot(data=sdchecktumor, aes(x=sd, fill=L1)) + geom_density() + coord_cartesian(xlim =c(0.0, 0.5)) + ggtitle("SD of EsBiv CGI across TCGA Tumors in allx.normalMelt2")
+
+
+
+
+#sd < 0.08 per CGI = least var CGI
+#sd > 0.18 per CGI = most var CGI
+
+#mhic and rmvar check for least variable normal CGI (sd < 0.08 per CGI)
+sdchecknormal %>%
+  filter(sd < 0.08) -> sdchecknormalleastvarCGI
+
+
+esBivCpGI_ProbesGenesTable[esBivCpGI_ProbesGenesTable$Arbitrary_CpGI_Name %in% sdchecknormalleastvarCGI$Arbitrary_CpGI_Name,] -> sdchecknormalleastvarCGI
+
+mhic(allx.normalMelt2, allx.tumorMelt2, sdchecknormalleastvarCGI) -> sdchecknormalleastvarCGIMhic
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, sdchecknormalleastvarCGI) -> sdchecknormalleastvarCGIRmVar
+
+#plotting mhic
+ggplot(sdchecknormalleastvarCGIMhic, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC - least variable CGI cgid - using allx.Melt2 Boxplot")
+
+ggplot(sdchecknormalleastvarCGIMhic, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC -  least variable CGI cgid - using allx.Melt2 Boxplot Jitter")
+
+
+#RmVar
+ggplot(sdchecknormalleastvarCGIRmVar, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - least variable CGI cgid - using allx.Melt2 Boxplot")
+
+ggplot(sdchecknormalleastvarCGIRmVar, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - least variable CGI cgid - using allx.Melt2 Boxplot Jitter") 
+
+#most var CGI > 0.18 sd
+
+sdchecktumor %>%
+  filter(sd < 0.18) -> sdchecktumormostvarCGI
+
+
+esBivCpGI_ProbesGenesTable[esBivCpGI_ProbesGenesTable$Arbitrary_CpGI_Name %in% sdchecktumormostvarCGI$Arbitrary_CpGI_Name,] -> sdchecktumormostvarCGI
+
+mhic(allx.normalMelt2, allx.tumorMelt2, sdchecktumormostvarCGI) -> sdchecktumormostvarCGIMhic
+
+varCpG(allx.normalMelt2, allx.tumorMelt2, sdchecktumormostvarCGI) -> sdchecktumormostvarCGIRmVar
+
+#plotting mhic
+ggplot(sdchecktumormostvarCGIMhic, aes(x=L1, y=percent)) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC - most variable tumor CGI cgid - using allx.Melt2 Boxplot")
+
+ggplot(sdchecktumormostvarCGIMhic, aes(x=L1, y=percent)) + geom_jitter(aes(colour=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHIC - most variable tumor CGI cgid - using allx.Melt2 Boxplot Jitter")
+
+
+#RmVar
+ggplot(sdchecktumormostvarCGIRmVar, aes(x=L1, y=rmVar, fill=L1)) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - most variable tumor CGI cgid - using allx.Melt2 Boxplot")
+
+ggplot(sdchecktumormostvarCGIRmVar, aes(x=L1, y=rmVar, fill=L1)) + geom_jitter(aes(colour=L1), show.legend=F) + geom_boxplot(aes(fill=L1), show.legend = F) + theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("RmVar - most variable tumor CGI cgid - using allx.Melt2 Boxplot Jitter") 
+
+
+```
+
+
+```{r}
+#correlation plots needed-------
+#Mhic v RmVar corr---------
+
+#objects: MVTMhic_check, MVTRmVar_check
+#join by variable
+
+inner_join(MVTMhic_check, MVTRmVar_check, by=c("variable", "L1")) -> MVTjoinedMhicRmvar
+
+####
+str_split(MVTjoinedMhicRmvar$L1, pattern="x.", n=2, simplify=TRUE) -> extracols
+
+as.data.frame(cbind(MVTjoinedMhicRmvar, extracols)) -> MVTjoinedMhicRmvar
+
+colnames(MVTjoinedMhicRmvar) <- c("L1", "variable", "percent", "rmVar", "CancerType", "HealthStatus")
+
+###
+
+ggplot(MVTjoinedMhicRmvar, aes(x=percent, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of Mhic by Cancer Type")
+
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="brca",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="brca",]$rmVar) #0.4827 = brca
+
+#cor by normal v tumor
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="brcax.normal",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="brcax.normal",]$rmVar) 
+#0.845 = brca N
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="brcax.tumor",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="brcax.tumor",]$rmVar) 
+#0.335 = brca T
+
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="coad",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="coad",]$rmVar) 
+#0.006
+
+#cor by normal v tumor
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="coadx.normal",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="coadx.normal",]$rmVar) 
+#0.667 = coad N
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="coadx.tumor",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="coadx.tumor",]$rmVar) 
+#-0.377 = coad T
+
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="luad",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="luad",]$rmVar) 
+#0.383
+
+#cor by normal v tumor
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="luadx.normal",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="luadx.normal",]$rmVar) 
+#0.599 = luad N
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="luadx.tumor",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="luadx.tumor",]$rmVar) 
+#0.276 = luad T
+
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="paad",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="paad",]$rmVar) 
+#0.353
+
+#cor by normal v tumor
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="paadx.normal",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="paadx.normal",]$rmVar) 
+#0.134 = paad N
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="paadx.tumor",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="paadx.tumor",]$rmVar) 
+#0.308 = paad T
+
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="gbm",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$CancerType=="gbm",]$rmVar) 
+#0.499
+
+
+#cor by normal v tumor
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="gbmx.normal",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="gbmx.normal",]$rmVar) 
+# 1 = gbm N (1 sample)
+cor(MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="gbmx.tumor",]$percent, MVTjoinedMhicRmvar[MVTjoinedMhicRmvar$L1=="gbmx.tumor",]$rmVar) 
+#0.474 = gbm T
+
+
+#mean beta v mhic corr---------
+allx.normalMelt2 %>%
+  dplyr::filter(cgid %in% mostVarTumorCgid$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(mvtMeanBeta=mean(value)) -> mvtMeanBetaN
+
+allx.tumorMelt2 %>%
+  dplyr::filter(cgid %in% mostVarTumorCgid$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(mvtMeanBeta=mean(value)) -> mvtMeanBetaT
+
+rbind(mvtMeanBetaN, mvtMeanBetaT) -> mvtMeanBetaAll
+
+rm(mvtMeanBetaN, mvtMeanBetaT)
+
+#join with MVTjoinedMhicRmvar from earlier
+inner_join(mvtMeanBetaAll, MVTjoinedMhicRmvar, by=c("variable", "L1")) -> MVTjoinedMhicRmvarMeanbeta
+
+ggplot(MVTjoinedMhicRmvarMeanbeta, aes(x=mvtMeanBeta, y=percent, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of Mhic as a function of mean beta across mvt probes per cancer")
+
+#cor(MVTjoinedMhicRmvarMeanbeta$percent, MVTjoinedMhicRmvarMeanbeta$mvtMeanBeta) #0.8681224
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="brca",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="brca",]$percent)
+#brca = 0.881
+
+#cor for N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$percent)
+#0.973 = brca N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$percent)
+#0.853 = brca T
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="coad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="coad",]$percent)
+#coad = 0.777
+
+#cor for N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$percent)
+#0.986 = coad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$percent)
+#0.698 = coad T
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$percent)
+#gbm=0.825
+
+#cor for N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$percent)
+#1 = gbm N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$percent)
+#0.819 = gbm T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="luad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="luad",]$percent)
+#luad=0.955
+
+#cor for N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$percent)
+#0.987 = luad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$percent)
+#0.948 = luad T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="paad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="paad",]$percent)
+#0.809
+
+#cor for N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$percent)
+#0.967 = paad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$percent)
+#0.789 = paad T
+
+
+
+#mean beta v rmvar corr--------
+
+ggplot(MVTjoinedMhicRmvarMeanbeta, aes(x=mvtMeanBeta, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of mean beta across mvt probes per cancer")
+
+#cor(MVTjoinedMhicRmvarMeanbeta$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta$rmVar) # 0.5789419
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="brca",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="brca",]$rmVar)
+#brca = 0.713
+
+#cor by N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$rmVar)
+#0.890 = brca N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$rmVar)
+#0.642 = brca T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="coad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="coad",]$rmVar)
+#coad = 0.430
+
+#cor by N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$rmVar)
+#0.747 = coad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$rmVar)
+#0.199 = coad T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$rmVar)
+#gbm=0.849
+
+#cor by N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$rmVar)
+#1 = gbm N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$rmVar)
+#0.843 = gbm T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="luad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="luad",]$rmVar)
+#luad=0.558
+
+#cor by N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$rmVar)
+#0.604 = luad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$rmVar)
+#0.487 = luad T
+
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="paad",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$CancerType=="paad",]$rmVar)
+#0.649
+
+#cor by N and T
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$rmVar)
+#0.114 = paad N
+
+cor(MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$mvtMeanBeta, MVTjoinedMhicRmvarMeanbeta[MVTjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$rmVar)
+#0.638 = paad T
+
+
+#sd across CGI v mean beta corr------
+#that would have to be mean beta across the CGI
+
+allx.normalMelt2 %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(meanCGIBeta=mean(value), CGISD=sd(value)) -> meanBetaSDCGIN
+
+allx.tumorMelt2 %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(meanCGIBeta=mean(value), CGISD=sd(value)) -> meanBetaSDCGIT
+
+rbind(meanBetaSDCGIN, meanBetaSDCGIT) -> meanBetaSDCGIAll
+
+na.omit(meanBetaSDCGIAll) -> meanBetaSDCGIAll
+
+####
+str_split(meanBetaSDCGIAll$L1, pattern="x.", n=2, simplify=TRUE) -> extracols
+
+as.data.frame(cbind(meanBetaSDCGIAll, extracols)) -> MeanBetaSDCGIAll
+
+colnames(MeanBetaSDCGIAll) <- c("L1", "variable", "Arbitrary_CpGI_Name", "meanCGIBeta", "CGISD", "CancerType", "HealthStatus")
+
+###
+
+ggplot(MeanBetaSDCGIAll, aes(x=meanCGIBeta, y=CGISD, colour=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point(alpha=0.1) + ggtitle("Scatterplot of SD across all CGI as a function of mean CGI Beta Per Cancer")
+
+#cor(meanBetaSDCGIAll$meanCGIBeta, meanBetaSDCGIAll$CGISD) #0.5294794
+
+#sd across esBiv CGI v mean beta corr------
+#that would have to be mean beta across the CGI
+
+allx.normalMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(meanCGIBeta=mean(value), CGISD=sd(value)) -> meanBetaSDEsBivCGIN
+
+allx.tumorMelt2 %>%
+  filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+    summarise(meanCGIBeta=mean(value), CGISD=sd(value)) -> meanBetaSDEsBivCGIT
+
+rbind(meanBetaSDEsBivCGIN, meanBetaSDEsBivCGIT) -> meanBetaSDEsBivCGIAll
+
+rm(meanBetaSDEsBivCGIN, meanBetaSDEsBivCGIT)
+
+na.omit(meanBetaSDEsBivCGIAll) -> meanBetaSDEsBivCGIAll
+
+####
+str_split(meanBetaSDEsBivCGIAll$L1, pattern="x.", n=2, simplify=TRUE) -> extracolsEsBiv
+
+as.data.frame(cbind(meanBetaSDEsBivCGIAll, extracolsEsBiv)) -> MeanBetaSDEsBivCGIAll
+
+colnames(MeanBetaSDEsBivCGIAll) <- c("L1", "variable", "Arbitrary_CpGI_Name", "meanCGIBeta", "CGISD", "CancerType", "HealthStatus")
+
+###
+
+ggplot(MeanBetaSDEsBivCGIAll, aes(x=meanCGIBeta, y=CGISD, colour=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point(alpha=0.1) + ggtitle("Scatterplot of SD across esbiv CGI as a function of mean CGI Beta Per Cancer")
+
+#cor(meanBetaSDCGIAll$meanCGIBeta, meanBetaSDCGIAll$CGISD) #0.5294794
+
+
+#per cancer top 100 MeanBeta CGI------
+
+MeanBetaSDEsBivCGIAll %>% filter(HealthStatus=="tumor") %>% group_by(variable) %>% slice_max(order_by = meanCGIBeta, n=100) %>% ungroup() %>% group_by(CancerType) %>% distinct(Arbitrary_CpGI_Name, .keep_all = TRUE) %>% slice_max(order_by = meanCGIBeta, n=100) -> top100MeanEsbivCGIT1
+
+#top100MeanEsbivCGIT1$CancerCGI <- paste(top100MeanEsbivCGIT1$CancerType, "-", top100MeanEsbivCGIT1$Arbitrary_CpGI_Name, sep="")
+
+#the normals
+MeanBetaSDEsBivCGIAll[MeanBetaSDEsBivCGIAll$CancerCGI %in% top100MeanEsbivCGIT1$CancerCGI & MeanBetaSDEsBivCGIAll$HealthStatus=="normal",] -> l
+
+l %>% group_by(HealthStatus, CancerType, Arbitrary_CpGI_Name) %>% slice_head(n=1) -> MeanEsbivCGIN1
+
+#rbind
+rbind(MeanEsbivCGIN1, top100MeanEsbivCGIT1) -> MeanEsBivCGI
+
+ggplot(MeanEsBivCGI, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + ggtitle("Scatterplot of Top 100 Mean Beta CGI in the tumor across esbiv CGI \nas a function of SD per CGI per Cancer")
+
+ggplot(MeanEsBivCGI, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + scale_x_continuous(limits=c(0.00,1.00)) + ggtitle("Scatterplot of Top 100 Mean Beta CGI in the tumor across esbiv CGI \nas a function of SD per CGI per Cancer")
+
+```
+
+```{r}
+#per cancer top 100 SD CGI ------
+MeanBetaSDEsBivCGIAll %>% filter(HealthStatus=="tumor") %>% group_by(variable) %>% slice_max(order_by = CGISD, n=100) %>% ungroup() %>% group_by(CancerType) %>% distinct(Arbitrary_CpGI_Name, .keep_all = TRUE) %>% slice_max(order_by = CGISD, n=100) -> top100SDMeanEsbivCGIT1
+
+top100SDMeanEsbivCGIT1$CancerCGI <- paste(top100SDMeanEsbivCGIT1$CancerType, "-", top100SDMeanEsbivCGIT1$Arbitrary_CpGI_Name, sep="")
+
+#the normals
+MeanBetaSDEsBivCGIAll[MeanBetaSDEsBivCGIAll$CancerCGI %in% top100SDMeanEsbivCGIT1$CancerCGI & MeanBetaSDEsBivCGIAll$HealthStatus=="normal",] -> l
+
+l %>% group_by(HealthStatus, CancerType, Arbitrary_CpGI_Name) %>% slice_head(n=1) -> sdMeanEsbivCGIN1
+
+#rbind
+rbind(sdMeanEsbivCGIN1, top100SDMeanEsbivCGIT1) -> sdMeanEsBivCGI
+
+ggplot(sdMeanEsBivCGI, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + ggtitle("Scatterplot of Top 100 SD CGI in the tumor across esbiv CGI \nas a function of Mean Beta per CGI per Cancer")
+
+ggplot(sdMeanEsBivCGI, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + scale_x_continuous(limits = c(0.00, 1.00)) + ggtitle("Scatterplot of Top 100 SD CGI in the tumor across esbiv CGI \nas a function of Mean Beta per CGI per Cancer")
+
+#those are the cgi sites, now we have to get those sites in tumor
+#MeanBetaSDEsBivCGIAll[MeanBetaSDEsBivCGIAll$CancerCGI %in% top100SDMeanEsbivCGIT1$CancerCGI,] -> top100SDMeanEsbivCGI
+
+#ggplot(top100SDMeanEsbivCGI, aes(x=meanCGIBeta, y=CGISD, colour=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + ggtitle("Scatterplot of Top 100 highest SD CGI across esbiv CGI \nas a function of Mean Beta per CGI Per Cancer")
+
+```
+```{r}
+#How many 269 CGI are present in the top 100 CGI (top 100 mean beta or top 100 SD)------
+
+#Data not saved! Rerun to get objects!
+
+#MeanEsBivCGI top 100 mean beta CGI
+#sdMeanEsBivCGI top 100 sd CGI
+
+#the 269 CGI 
+unique(MVT2_ProbesGenesTable2$Arbitrary_CpGI_Name) -> the269CGI
+
+#the top 100 mean beta or SD CGI are per cancer type so we need to overlap per cancer type too
+
+MeanEsBivCGI %>% group_by(L1) %>% filter(Arbitrary_CpGI_Name %in% the269CGI) %>% summarise(numMatchedCGI=n(), percentMatched=n()/269*100)
+
+MeanEsBivCGI %>% group_by(L1) %>% filter(Arbitrary_CpGI_Name %in% the269CGI) -> meanEsBivCGI_B269
+
+ggplot(meanEsBivCGI_B269, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + scale_x_continuous(limits=c(0.00,1.00)) + ggtitle("Scatterplot of Top 100 Mean Beta CGI in the tumor across esbiv CGI\n within Boruta 269 as a function of SD per CGI per Cancer")
+
+
+
+#top 100 SD CGI
+sdMeanEsBivCGI %>% group_by(L1) %>% filter(Arbitrary_CpGI_Name %in% the269CGI) %>% summarise(numMatchedCGI=n(), percentMatched=n()/269*100)
+
+sdMeanEsBivCGI %>% group_by(L1) %>% filter(Arbitrary_CpGI_Name %in% the269CGI) -> sdMeanEsBivCGI_B269
+
+ggplot(meanEsBivCGI_B269, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + scale_x_continuous(limits=c(0.00,1.00)) + ggtitle("Scatterplot of Top 100 Mean Beta CGI in the tumor across esbiv CGI\n within Boruta 269 as a function of SD per CGI per Cancer")
+
+
+ggplot(sdMeanEsBivCGI_B269, aes(x=meanCGIBeta, y=CGISD, color=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + scale_x_continuous(limits = c(0.00, 1.00)) + ggtitle("Scatterplot of Top 100 SD CGI in the tumor across esbiv CGI\n within Boruta 269 as a function of Mean Beta per CGI per Cancer")
+
+
+
+```
+
+```{r}
+#what if mhic was between 0.3 - 0.7 -----
+mhicv2(allx.normalMelt2, allx.tumorMelt2, esBivCpGI_ProbesGenesTable) -> esbivMhicv2_check
+
+#plotting mhic
+ggplot(esbivMhicv2_check, aes(x=L1, y=percent)) + geom_jitter(aes(color=L1), show.legend = F) + geom_boxplot(aes(fill=L1), show.legend=F) + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("MHICv2 (0.3-0.7) -  esbiv cgid - using allx.Melt2 Boxplot")
+
+```
+
+
+```{r}
+#top 100 highest SD CGI in esbiv as a function of mean beta per CGI for 1 normal and 1 cancer-----
+
+#top100SDMeanEsbivCGI will have the data, we should just need to select 5 normals and 5 tumors, 1 for each cancer
+
+top100SDMeanEsbivCGI %>% filter(HealthStatus=="normal") %>% group_by(HealthStatus, CancerType) %>% slice_max(order_by = CGISD, n=1) -> samplesToGetN
+
+top100SDMeanEsbivCGIT1 %>% group_by(HealthStatus, CancerType) %>% slice_max(order_by = CGISD, n=1) -> samplesToGetT
+
+samplesToGet <- rbind(samplesToGetN, samplesToGetT)
+
+top100SDMeanEsbivCGI[top100SDMeanEsbivCGI$variable %in% samplesToGet$variable,] -> samplesGot
+
+```
+
+```{r}
+
+
+ggplot(samplesGot, aes(x=meanCGIBeta, y=CGISD, colour=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + ggtitle("Scatterplot of Top 100 highest SD CGI across esbiv CGI \nas a function of Mean Beta per CGI Per Cancer \n1 normal, 1 tumor")
+
+ggplot(samplesGot, aes(x=meanCGIBeta, y=CGISD, colour=Arbitrary_CpGI_Name)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point(show.legend = FALSE) + ggtitle("Scatterplot of Top 100 highest SD CGI across esbiv CGI \nas a function of Mean Beta per CGI Per Cancer \n1 normal, 1 tumor")
+
+
+#5775041088_R06C02= coad tumor, 6057825028_R04C02 coad normal
+
+top100SDMeanEsbivCGI[top100SDMeanEsbivCGI$variable %in% c("5775041088_R06C02", "6057825028_R04C02"),] -> testCoad
+
+ggplot(testCoad, aes(x=meanCGIBeta, y=CGISD, colour=Arbitrary_CpGI_Name)) + facet_grid(.~HealthStatus, scales="free") + geom_point(show.legend = FALSE) + ggtitle("Scatterplot of Top 100 highest SD CGI across esbiv CGI \nas a function of Mean Beta per CGI Per Cancer \n1 normal, 1 tumor COAD")
+
+
+```
+
+```{r}
+#top 100 highest MeanBeta CGI in esbiv as a function of SD per CGI for 1 normal and 1 cancer-----
+
+top100betaMeanEsbivCGI %>% group_by(HealthStatus, CancerType) %>% slice_max(order_by = CGISD, n=1) -> samplesToGetMean
+
+top100betaMeanEsbivCGI[top100betaMeanEsbivCGI$variable %in% samplesToGet$variable,] -> samplesGotMean
+
+```
+
+```{r}
+ggplot(samplesGotMean, aes(x=meanCGIBeta, y=CGISD, colour=HealthStatus)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point() + ggtitle("Scatterplot of Top 100 highest Mean Beta CGI across esbiv CGI \nas a function of SD per CGI Per Cancer \n1 normal, 1 tumor")
+
+ggplot(samplesGotMean, aes(x=meanCGIBeta, y=CGISD, colour=Arbitrary_CpGI_Name)) + facet_grid(CancerType~HealthStatus, scales="free") + geom_point(show.legend = FALSE) + ggtitle("Scatterplot of Top 100 highest Mean Beta CGI across esbiv CGI \nas a function of SD per CGI Per Cancer \n1 normal, 1 tumor")
+
+#6285625068_R04C01= coad tumor, 6042316015_R05C01 coad normal
+
+top100betaMeanEsbivCGI[top100betaMeanEsbivCGI$variable %in% c("6285625068_R04C01", "6042316015_R05C01"),] -> testCoadMean
+
+ggplot(testCoadMean, aes(x=meanCGIBeta, y=CGISD, colour=Arbitrary_CpGI_Name)) + facet_grid(.~HealthStatus, scales="free") + geom_point(show.legend = FALSE) + ggtitle("Scatterplot of Top 100 highest Mean Beta CGI across esbiv CGI \nas a function of SD per CGI Per Cancer \n1 normal, 1 tumor COAD")
+
+```
+
+```{r}
+
+#correlation plots needed for esbiv probes-------
+#Mhic v RmVar corr---------
+
+#objects: esbivMhic_check, esbivRmVar_check
+#join by variable
+
+inner_join(esbivMhic_check, esbivRmVar_check, by=c("variable", "L1")) -> esbivjoinedMhicRmvar
+
+####
+str_split(esbivjoinedMhicRmvar$L1, pattern="x.", n=2, simplify=TRUE) -> extracols2
+
+as.data.frame(cbind(esbivjoinedMhicRmvar, extracols2)) -> esbivjoinedMhicRmvar
+
+colnames(esbivjoinedMhicRmvar) <- c("L1", "variable", "percent", "rmVar", "CancerType", "HealthStatus")
+
+###
+
+ggplot(esbivjoinedMhicRmvar, aes(x=percent, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of Mhic by Cancer Type in esbiv Probes")
+
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="brca",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="brca",]$rmVar) #0.5410469 = brca
+
+#cor by normal v tumor
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="brcax.normal",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="brcax.normal",]$rmVar) 
+#0.8698067 = brca N
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="brcax.tumor",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="brcax.tumor",]$rmVar) 
+#0.4130624 = brca T
+
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="coad",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="coad",]$rmVar) 
+#0.1348989
+
+#cor by normal v tumor
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="coadx.normal",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="coadx.normal",]$rmVar) 
+#0.6974236 = coad N
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="coadx.tumor",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="coadx.tumor",]$rmVar) 
+#-0.2157484= coad T
+
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="luad",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="luad",]$rmVar) 
+#0.4627214
+
+#cor by normal v tumor
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="luadx.normal",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="luadx.normal",]$rmVar) 
+#0.6440727 = luad N
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="luadx.tumor",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="luadx.tumor",]$rmVar) 
+#0.3731864 = luad T
+
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="paad",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="paad",]$rmVar) 
+#0.3249552
+
+#cor by normal v tumor
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="paadx.normal",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="paadx.normal",]$rmVar) 
+#0.08079928 = paad N
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="paadx.tumor",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="paadx.tumor",]$rmVar) 
+#0.2920766 = paad T
+
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="gbm",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$CancerType=="gbm",]$rmVar) 
+#0.528037
+
+
+#cor by normal v tumor
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="gbmx.normal",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="gbmx.normal",]$rmVar) 
+# -1 = gbm N (1 sample)
+cor(esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="gbmx.tumor",]$percent, esbivjoinedMhicRmvar[esbivjoinedMhicRmvar$L1=="gbmx.tumor",]$rmVar) 
+#0.5061711 = gbm T
+
+
+#mean beta v mhic corr---------
+allx.normalMelt2 %>%
+  dplyr::filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(esbivMeanBeta=mean(value)) -> esbivMeanBetaN
+
+allx.tumorMelt2 %>%
+  dplyr::filter(cgid %in% esBivCpGI_ProbesGenesTable$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(esbivMeanBeta=mean(value)) -> esbivMeanBetaT
+
+rbind(esbivMeanBetaN, esbivMeanBetaT) -> esbivMeanBetaAll
+
+rm(esbivMeanBetaN, esbivMeanBetaT)
+
+#join with esbivjoinedMhicRmvar from earlier
+inner_join(esbivMeanBetaAll, esbivjoinedMhicRmvar, by=c("variable", "L1")) -> esbivjoinedMhicRmvarMeanbeta
+
+ggplot(esbivjoinedMhicRmvarMeanbeta, aes(x=esbivMeanBeta, y=percent, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of Mhic as a function of mean beta across esbiv probes per cancer")
+
+#cor(esbivjoinedMhicRmvarMeanbeta$percent, esbivjoinedMhicRmvarMeanbeta$esbivMeanBeta) #0.8681224
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="brca",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="brca",]$percent)
+#brca = 0.8830414
+
+#cor for N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$percent)
+# 0.9591758 = brca N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$percent)
+#0.8559172 = brca T
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="coad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="coad",]$percent)
+#coad = 0.7793582
+
+#cor for N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$percent)
+#0.9858296 = coad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$percent)
+# 0.7005602 = coad T
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$percent)
+#gbm=0.8277458
+
+#cor for N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$percent)
+#1 = gbm N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$percent)
+#0.8208192 = gbm T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="luad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="luad",]$percent)
+#luad=0.9556468
+
+#cor for N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$percent)
+#0.9778658 = luad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$percent)
+# 0.9490596 = luad T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="paad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="paad",]$percent)
+# 0.8106198
+
+#cor for N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$percent)
+#0.9594727 = paad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$percent)
+#0.7882652 = paad T
+
+
+
+#mean beta v rmvar corr--------
+
+ggplot(esbivjoinedMhicRmvarMeanbeta, aes(x=esbivMeanBeta, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of mean beta across esbiv probes per cancer")
+
+#cor(esbivjoinedMhicRmvarMeanbeta$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta$rmVar) # 0.4918611
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="brca",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="brca",]$rmVar)
+#brca = 0.7634661
+
+#cor by N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.normal",]$rmVar)
+#0.9092799 = brca N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$rmVar)
+# 0.7059124 = brca T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="coad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="coad",]$rmVar)
+#coad = 0.5552228
+
+#cor by N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.normal",]$rmVar)
+#0.7719464 = coad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$rmVar)
+# 0.3677865 = coad T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="gbm",]$rmVar)
+#gbm= 0.8648561
+
+#cor by N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$rmVar)
+#-1 = gbm N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$rmVar)
+#  0.8601214 = gbm T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="luad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="luad",]$rmVar)
+#luad=0.6257103
+
+#cor by N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.normal",]$rmVar)
+#0.6315179 = luad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$rmVar)
+#0.5673017 = luad T
+
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="paad",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$CancerType=="paad",]$rmVar)
+#0.6392543
+
+#cor by N and T
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.normal",]$rmVar)
+# 0.04857381= paad N
+
+cor(esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$esbivMeanBeta, esbivjoinedMhicRmvarMeanbeta[esbivjoinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$rmVar)
+#0.6315932 = paad T
+
+```
+
+
+```{r}
+#correlation plots needed for boruta probes-------
+#Mhic v RmVar corr---------
+
+#objects: MVT2Mhic2, MVT2RmVar2
+#join by variable
+
+inner_join(MVT2Mhic2, MVT2RmVar2, by=c("variable", "L1")) -> MVT2joinedMhicRmvar
+
+####
+str_split(MVT2joinedMhicRmvar$L1, pattern="x.", n=2, simplify=TRUE) -> extracols2
+
+as.data.frame(cbind(MVT2joinedMhicRmvar, extracols2)) -> MVT2joinedMhicRmvar
+
+colnames(MVT2joinedMhicRmvar) <- c("L1", "variable", "percent", "rmVar", "CancerType", "HealthStatus")
+
+###
+
+ggplot(MVT2joinedMhicRmvar, aes(x=percent, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of Mhic by Cancer Type in Boruta Probes")
+
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="brca",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="brca",]$rmVar) #0.311945 = brca
+
+#cor by normal v tumor
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="brcax.normal",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="brcax.normal",]$rmVar) 
+#0.7663654 = brca N
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="brcax.tumor",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="brcax.tumor",]$rmVar) 
+#0.09763886 = brca T
+
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="coad",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="coad",]$rmVar) 
+#-0.07709924
+
+#cor by normal v tumor
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="coadx.normal",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="coadx.normal",]$rmVar) 
+#0.6145837 = coad N
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="coadx.tumor",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="coadx.tumor",]$rmVar) 
+#-0.4788131 = coad T
+
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="luad",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="luad",]$rmVar) 
+#0.2136259
+
+#cor by normal v tumor
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="luadx.normal",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="luadx.normal",]$rmVar) 
+#0.4952197 = luad N
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="luadx.tumor",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="luadx.tumor",]$rmVar) 
+#0.04453696 = luad T
+
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="paad",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="paad",]$rmVar) 
+#0.24975
+
+#cor by normal v tumor
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="paadx.normal",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="paadx.normal",]$rmVar) 
+#0.1089633 = paad N
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="paadx.tumor",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="paadx.tumor",]$rmVar) 
+#0.203024 = paad T
+
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="gbm",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$CancerType=="gbm",]$rmVar) 
+#0.3471019
+
+
+#cor by normal v tumor
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="gbmx.normal",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="gbmx.normal",]$rmVar) 
+# -1 = gbm N (1 sample)
+cor(MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="gbmx.tumor",]$percent, MVT2joinedMhicRmvar[MVT2joinedMhicRmvar$L1=="gbmx.tumor",]$rmVar) 
+#0.3107452 = gbm T
+
+
+#mean beta v mhic corr---------
+allx.normalMelt2 %>%
+  dplyr::filter(cgid %in% MVT2_ProbesGenesTable2$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(MVT2MeanBeta=mean(value)) -> MVT2MeanBetaN
+
+allx.tumorMelt2 %>%
+  dplyr::filter(cgid %in% MVT2_ProbesGenesTable2$cgid) %>%
+    group_by(L1, variable) %>%
+      summarise(MVT2MeanBeta=mean(value)) -> MVT2MeanBetaT
+
+rbind(MVT2MeanBetaN, MVT2MeanBetaT) -> MVT2MeanBetaAll
+
+rm(MVT2MeanBetaN, MVT2MeanBetaT)
+
+
+
+#stats
+MVT2MeanBetaAll2 <- MVT2MeanBetaAll
+
+gsub("x.*", "", MVT2MeanBetaAll2$L1) -> MVT2MeanBetaAll2$CancerType
+
+MVT2MeanBetaAll2 %>% group_by(CancerType) %>% wilcox_effsize(MVT2MeanBeta ~ L1) 
+
+MVT2MeanBetaAll2 %>% group_by(CancerType) %>% wilcox_test(MVT2MeanBeta ~ L1) 
+
+
+
+#join with MVT2joinedMhicRmvar from earlier
+inner_join(MVT2MeanBetaAll, MVT2joinedMhicRmvar, by=c("variable", "L1")) -> MVT2joinedMhicRmvarMeanbeta
+
+ggplot(MVT2joinedMhicRmvarMeanbeta, aes(x=MVT2MeanBeta, y=percent, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of Mhic as a function of mean beta across Boruta probes per cancer")
+
+#cor(MVT2joinedMhicRmvarMeanbeta$percent, MVT2joinedMhicRmvarMeanbeta$MVT2MeanBeta) #0.8681224
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="brca",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="brca",]$percent)
+#brca = 0.8292768
+
+#cor for N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.normal",]$percent)
+#0.9737549 = brca N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$percent)
+#0.7790381 = brca T
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="coad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="coad",]$percent)
+#coad = 0.7319196
+
+#cor for N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.normal",]$percent)
+#0.9899655 = coad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$percent)
+#0.6232721 = coad T
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="gbm",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="gbm",]$percent)
+#gbm=0.7538391
+
+#cor for N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$percent)
+#1 = gbm N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$percent)
+#0.7407123 = gbm T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="luad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="luad",]$percent)
+#luad=0.9305703
+
+#cor for N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.normal",]$percent)
+#0.9873088 = luad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$percent)
+#0.916115 = luad T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="paad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="paad",]$percent)
+#0.7879909
+
+#cor for N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.normal",]$percent)
+#0.9701943 = paad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$percent)
+#0.7620001 = paad T
+
+
+
+#mean beta v rmvar corr--------
+
+ggplot(MVT2joinedMhicRmvarMeanbeta, aes(x=MVT2MeanBeta, y=rmVar, colour=HealthStatus)) + facet_grid(CancerType~., scales="free") + geom_point() + ggtitle("Scatterplot of VarCpG as a function of mean beta across Boruta probes per cancer")
+
+#cor(MVT2joinedMhicRmvarMeanbeta$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta$rmVar) # 0.4918611
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="brca",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="brca",]$rmVar)
+#brca = 0.6279826
+
+#cor by N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.normal",]$rmVar)
+#0.8493668 = brca N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="brcax.tumor",]$rmVar)
+#0.5291785 = brca T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="coad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="coad",]$rmVar)
+#coad = 0.3990864
+
+#cor by N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.normal",]$rmVar)
+#0.6915255 = coad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="coadx.tumor",]$rmVar)
+#0.1641601 = coad T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="gbm",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="gbm",]$rmVar)
+#gbm=0.8234082
+
+#cor by N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.normal",]$rmVar)
+#-1 = gbm N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="gbmx.tumor",]$rmVar)
+# 0.8153312 = gbm T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="luad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="luad",]$rmVar)
+#luad=0.4458171
+
+#cor by N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.normal",]$rmVar)
+#0.5351687 = luad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="luadx.tumor",]$rmVar)
+#0.3391896 = luad T
+
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="paad",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$CancerType=="paad",]$rmVar)
+#0.5904572
+
+#cor by N and T
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.normal",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.normal",]$rmVar)
+#0.1750194 = paad N
+
+cor(MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$MVT2MeanBeta, MVT2joinedMhicRmvarMeanbeta[MVT2joinedMhicRmvarMeanbeta$L1=="paadx.tumor",]$rmVar)
+#0.5748961 = paad T
+
+
+
+```
+
+
+```{r}
+#what is the overlap between limma probes and the 269 CGI boruta probes?
+#limmacgids[limmacgids$cgid %in% MVT2_ProbesGenesTable2$cgid,]
+
+#length(limmacgids[limmacgids$cgid %in% MVT2_ProbesGenesTable2$cgid,1]) #3211
+
+#nrow(MVT2_ProbesGenesTable2) #3897
+
+#3211/3897 = 82.4% <- this is the overlap. This chunk has been completed.
+
+```
+
+```{r}
+allx.normalMelt2 %>%
+  filter(L1=="coadx.normal", cgid %in% esBivCpGI_ProbesGenesTable$cgid) -> esbivNdensity
+
+allx.tumorMelt2 %>%
+  filter(L1=="coadx.tumor", cgid %in% esBivCpGI_ProbesGenesTable$cgid) -> esBivTdensity
+
+ggplot(esbivNdensity, aes(x=value, colour=L1)) + geom_density() + geom_density(data=esBivTdensity, aes(x=value, colour=L1)) + ggtitle("Beta Density of esBiv cgid in TCGA COAD")
+
+```
+
+```{r}
+#boruta rf model v1  -----
+
+library(Boruta)
+library(mlbench)
+library(caret)
+library(randomForest)
+
+set.seed(111)
+#data("Sonar") # the example data
+#ind <- sample(2, nrow(Sonar), replace = T, prob = c(0.6, 0.4))
+#train <- Sonar[ind==1,]
+#test <- Sonar[ind==2,]
+
+
+#rf60 <- randomForest(Class ~ ., data = train) 
+
+##for our data
+g <- varMVT3_2
+
+colnames(g) <- c("L1", paste("col", 2:623, sep=""))
+
+ind2 <- sample(2, nrow(g), replace = T, prob=c(0.6, 0.4))
+
+train2 <- g[ind2==1,]
+test <- g[ind2==2,]
+
+#my training set is unbalanced, my predictor is going to get lazy...
+#need to even out the number of normal and tumor samples
+
+train2[train2$L1=="normal",] -> train2N #86 records
+
+train2[train2$L1=="tumor",] -> train2T #1088 records
+
+train3 <- rbind(train2N, train2T[1:100,])
+
+rf2 <- randomForest(L1 ~ ., data=train3)
+
+#test2 <- test[,-1]
+
+test2T <- test[test$L1=="tumor",]
+
+test2 <- rbind(test[test$L1=="normal",], test2T[1:100,])
+
+p <- predict(rf2, test2)
+confusionMatrix(p, test2$L1)
+
+boruta3 <- Boruta(L1~., data=train3, doTrace=2, maxRun=500)
+bor <- TentativeRoughFix(boruta3)
+
+getNonRejectedFormula(bor)
+
+rfconfirm <- randomForest(getNonRejectedFormula(bor), data=train3)
+
+pconfirm <- predict(rfconfirm, test2)
+confusionMatrix(pconfirm, test2$L1)
+
+#####
+#confusion matrix
+#confusMtx = table(test$L1, pconfirm)
+
+#print out important features
+importance(rfconfirm) # higher numbers = more important features
+
+#plotting model
+plot(rfconfirm) # lines should stabilise by the end of the graph
+
+tuneRF(train3[-1], train3$L1, ntreeTry = 500, stepFactor = 1.5, improve=0.01, trace=TRUE, plot=TRUE ) # finding optimum mtry value = 24
+
+#Parameters in tuneRF function 
+#The stepFactor specifies at each iteration, mtry is inflated (or deflated) by this value
+#The improve specifies the (relative) improvement in OOB error must be by this much for the search to continue
+#The trace specifies whether to print the progress of the search
+#The plot specifies whether to plot the OOB error as function of mtry
+
+#remake model using mtry =24
+
+rftune <- randomForest(getNonRejectedFormula(bor), data=train3, mtry=24)
+
+ptune <- predict(rftune, test2)
+confusionMatrix(ptune, test2$L1)
+
+#variable importance
+importance(rftune)
+varImpPlot(rftune)
+
+#Higher the value of mean decrease accuracy or mean decrease gini score, 
+#higher the importance of the variable in the model.
+
+#Mean Decrease Accuracy - How much the model accuracy decreases if we drop that variable.
+#Mean Decrease Gini - Measure of variable importance based on the Gini impurity index used for the calculation of splits in trees.
+
+library(ROCR)
+pred1=predict(rftune, test2, type = "prob")
+perf = prediction(pred1[,2], test2$L1)
+# 1. Area under curve
+auc = performance(perf, "auc")
+auc
+# 2. True Positive and Negative Rate
+pred3 = performance(perf, "tpr","fpr")
+# 3. Plot the ROC curve
+plot(pred3, main="ROC Curve for Random Forest rftune on test2", col=2, lwd=2)
+abline(a=0,b=1,lwd=2,lty=2,col="gray")
+
+
+```
+```{r}
+#rf model using methylation per CGI
+set.seed(111)
+
+##for our data
+o <- meanMVT3_2
+
+colnames(o) <- c("L1", paste("col", 2:623, sep=""))
+
+ind3 <- sample(2, nrow(o), replace = T, prob=c(0.6, 0.4))
+
+traino <- o[ind3==1,]
+testo <- o[ind3==2,]
+
+traino[traino$L1=="normal",] -> trainoN #106 records
+
+traino[traino$L1=="tumor",] -> trainoT #1178 records
+
+traino <- rbind(trainoN, trainoT[1:100,])
+
+rfconfirmo <- randomForest(getNonRejectedFormula(bor), data=traino)
+
+testoT <- testo[testo$L1=="tumor",] #727 records
+
+testo <- rbind(testo[testo$L1=="normal",], testoT[1:100,]) #173 rows
+
+
+pconfirmo <- predict(rfconfirmo, testo)
+confusionMatrix(pconfirmo, testo$L1)
+
+#####
+#confusion matrix
+#confusMtx = table(test$L1, pconfirm)
+
+#print out important features
+importance(rfconfirmo) # higher numbers = more important features
+
+#plotting model
+plot(rfconfirmo) # lines should stabilise by the end of the graph
+
+#doesn't work for mean of CGI
+#tuneRF(o[-1], o$L1, ntreeTry = 500, stepFactor = 1.5, improve=0.01, trace=TRUE, plot=TRUE ) # finding optimum mtry value = 24
+
+#Parameters in tuneRF function 
+#The stepFactor specifies at each iteration, mtry is inflated (or deflated) by this value
+#The improve specifies the (relative) improvement in OOB error must be by this much for the search to continue
+#The trace specifies whether to print the progress of the search
+#The plot specifies whether to plot the OOB error as function of mtry
+
+#remake model using mtry =24
+
+rftuneo <- randomForest(getNonRejectedFormula(bor), data=traino, mtry=24)
+
+ptuneo <- predict(rftuneo, testo)
+confusionMatrix(ptuneo, testo$L1)
+
+#variable importance
+importance(rftuneo)
+varImpPlot(rftuneo)
+
+#Higher the value of mean decrease accuracy or mean decrease gini score, 
+#higher the importance of the variable in the model.
+
+#Mean Decrease Accuracy - How much the model accuracy decreases if we drop that variable.
+#Mean Decrease Gini - Measure of variable importance based on the Gini impurity index used for the calculation of splits in trees.
+
+library(ROCR)
+pred1o=predict(rftuneo, testo, type = "prob")
+perfo = prediction(pred1o[,2], testo$L1)
+# 1. Area under curve
+auco = performance(perfo, "auc")
+auco
+# 2. True Positive and Negative Rate
+pred3o = performance(perfo, "tpr","fpr")
+# 3. Plot the ROC curve
+plot(pred3o, main="ROC Curve for Random Forest rftuneo on testo \n methylation across CGI 73N, 100T", col=2, lwd=2)
+abline(a=0,b=1,lwd=2,lty=2,col="gray")
+
+```
+
+```{r}
+
+
+#edit limma lists to only contain sites with logFC > 0.2 | < -0.2 and FDR < 0.05----
+#data not saved in this RData!
+
+#load("/scratch4/heaswar1/Sara/FromDesktop/EII/EII/gettingUniqueSigCgidFromAllCancers/gettingalluniquesignifcgidsfromallcancers.RData")
+#script gettingalluniquesignifcgidsfromallcancers.R in the same dir 
+
+#allfiles = the results from top table for each of the tcga cancers
+#allcgids is the melted version of that with measure=c("logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B")
+
+#I would like to remelt the data so that you have columns detailing logFC, adj.P.Val
+
+allcgids2 <- melt(allfiles, measure=c("AveExpr", "t", "P.Value", "B"))
+
+#subset by FDR < 0.05, logFC > 0.2 | < -0.2
+allcgids2 %>% group_by(L1) %>% filter(adj.P.Val < 0.05) %>% filter(logFC > 0.2 | logFC < -0.2) -> allcgids3
+
+allcgids3 <- allcgids3[, c(-4, -5)]
+
+ifelse(allcgids3$logFC > 0.2, "hyper", "hypo") -> allcgids3$SiteStatus
+
+distinct(allcgids3) -> allcgids3
+
+save(allcgids3, file="/home/sthursb3/scr4_heaswar1/Sara/FromDesktop/EII/EII/gettingUniqueSigCgidFromAllCancers/filteredlimmaprobesforeachcancer.RData")
+
+write.table(allcgids3, file="/home/sthursb3/scr4_heaswar1/Sara/FromDesktop/EII/EII/gettingUniqueSigCgidFromAllCancers/filteredlimmaprobesforeachcancer.txt", sep="\t", quote=FALSE, row.names = FALSE)
+
+#old - marked out on jan 19th 2024
+#get unique cgids
+#unique(allcgids3$cgid) -> uniqFilteredLimmacgids
+
+#write to file
+#write.table(uniqFilteredLimmacgids, file="UniqueFilteredLimmaCgidsAcrossTCGACancers.txt", sep="\t", row.names = FALSE)
+
+
+
+```
+
+```{r}
+
+#what is the overlap between filtered limma and B269?-----
+#filtered limma = FDR < 0.05, logFC > 0.2 | logFC < -0.2
+
+#limma filtered = uniqFilteredLimmacgids #9008 unique cgids or allcgids3 for the dataframe
+#B269 = MVT2_ProbesGenesTable2 #3756 unique cgids
+
+uniqFilteredLimmacgids[uniqFilteredLimmacgids %in% MVT2_ProbesGenesTable2$ProbeName] #1891 limma filtered cgids in B269
+
+#1891/3756*100 = 50.35% overlap between limma filtered and B269
+
+```
+
+```{r}
+#Density plot of varCpG for the B269 CGI-----
+#data not saved to RData object!
+
+#varCpG for B269 = MVT2RmVar2
+#want to split density based on tumor and normal 
+
+MVT2RmVar2$Cancer <- gsub("x.tumor|x.normal", "", MVT2RmVar2$L1)
+
+MVT2RmVar2$SampleStatus <- gsub(".*x.", "", MVT2RmVar2$L1)
+
+#to get colors for the manual scale
+MVT2RmVar2 %>% group_by(SampleStatus) %>% summarise(numrows=n())
+
+c(rep("blue", times=179), rep("red", times=1905), rep("darkblue", times=1), rep("darkred", times=1)) -> cols
+
+ggplot(MVT2RmVar2) + geom_density(aes(x=rmVar, color=SampleStatus), linetype="dashed", size=1) + ggtitle("VarCpG Density per sample of B269 CGI") + scale_color_manual(values=cols[2085:2086])
+
+
+```
+
+```{r}
+#Density plot of varCpG for the B269 CGI-----
+#data not saved to RData object!
+
+#varCpG for B269 = MVT2RmVar2
+#want to split density based on tumor and normal 
+
+MVT2RmVar2$Cancer <- gsub("x.tumor|x.normal", "", MVT2RmVar2$L1)
+
+MVT2RmVar2$SampleStatus <- gsub(".*x.", "", MVT2RmVar2$L1)
+
+#to get colors for the manual scale
+MVT2RmVar2 %>% group_by(SampleStatus) %>% summarise(numrows=n())
+
+c(rep("blue", times=179), rep("red", times=1905), rep("darkblue", times=1), rep("darkred", times=1)) -> cols
+
+ggplot(MVT2RmVar2) + geom_density(aes(x=rmVar, color=SampleStatus), linetype="dashed", size=1) + ggtitle("VarCpG Density per sample of B269 CGI") + scale_color_manual(values=cols[2085:2086])
+
+#1414 for first appearance of MVT2RmVar2
+#need this bit of the rmVar function
+#rmVar <- function(meltedData, mostVarCgid){
+  
+  #allx.normalMelt = meltedData
+  #mostVarTumorCgid = mostVarCgid or equal
+  
+#  meltedData %>%
+#    filter(cgid %in% unique(mostVarCgid$cgid)) %>%
+ #   group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+ #   summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> a
+  
+ # a <- na.omit(a)
+  
+ # a <- a[a$numProbes >= 10,]
+
+#normals
+allx.normalMelt2 %>%
+  filter(cgid %in% unique(MVT2_ProbesGenesTable2$cgid)) %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+  summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> MVT2VarPerCGIN
+
+MVT2VarPerCGIN <- na.omit(MVT2VarPerCGIN)
+
+MVT2VarPerCGIN <- MVT2VarPerCGIN[MVT2VarPerCGIN$numProbes >= 10,]
+
+#tumors
+allx.tumorMelt2 %>%
+  filter(cgid %in% unique(MVT2_ProbesGenesTable2$cgid)) %>%
+  group_by(L1, variable, Arbitrary_CpGI_Name) %>%
+  summarise(varianceCGI=var(value, na.rm=T), numProbes=n()) -> MVT2VarPerCGIT
+
+MVT2VarPerCGIT <- na.omit(MVT2VarPerCGIT)
+
+MVT2VarPerCGIT <- MVT2VarPerCGIT[MVT2VarPerCGIT$numProbes >= 10,]
+
+rbind(MVT2VarPerCGIN, MVT2VarPerCGIT) -> MVT2VarPerCGI
+
+#rm(MVT2VarPerCGIN, MVT2VarPerCGIT)
+
+MVT2VarPerCGI$Cancer <- gsub("x.tumor|x.normal", "", MVT2VarPerCGI$L1)
+
+MVT2VarPerCGI$SampleStatus <- gsub(".*x.", "", MVT2VarPerCGI$L1)
+
+#to get colors for the manual scale
+MVT2VarPerCGI %>% group_by(SampleStatus) %>% summarise(numrows=n())
+
+c(rep("blue", times=33565), rep("red", times=358266), rep("darkblue", times=1), rep("darkred", times=1)) -> cols
+
+ggplot(MVT2VarPerCGI)  + geom_line(aes(x=varianceCGI, color=variable), stat="density", alpha=0.2, size=0.2) + theme(legend.position = "none")  + scale_color_manual(values=cols) + geom_density(aes(x=varianceCGI, color=SampleStatus), linetype="dashed", size=1) + ggtitle("VarCpG Density per sample of Healthy and Cancer samples within B259 CGI")
+
+ggplot(MVT2VarPerCGI) + facet_grid(Cancer~SampleStatus, scales="free")  + geom_line(aes(x=varianceCGI, color=variable), stat="density", alpha=0.2, size=0.2) + theme(legend.position = "none") + geom_density(aes(x=varianceCGI, color=SampleStatus), linetype="dashed", size=1)
+
+#scale_color_manual(values = c("setosa" = "purple", "versicolor="orange", "virginica"="steelblue")) 
+
+scale_color_manual(values = c("brca" = "rose", "coad" = "darkyellow", "gbm" = "darkgreen", "luad" = "turquoise", "paad"="lavender", "normal"="darkblue", "tumor"="darkred")) 
+
+```
+
+```{r}
+#plot of hyper and hypo limma mean beta per cancer in TCGA-----
+
+load("/scratch4/heaswar1/Sara/FromDesktop/EII/EII/gettingUniqueSigCgidFromAllCancers/filteredlimmaprobesforeachcancer.RData")
+
+gsub("x.normal", "", allx.normalMelt2$L1) -> allx.normalMelt2$CancerType
+
+gsub("x.tumor", "", allx.tumorMelt2$L1) -> allx.tumorMelt2$CancerType
+
+gsub("_sigInterTumorCG", "", allcgids3$L1) -> allcgids3$CancerType
+
+
+cancerSpecificLimProbesMelt <- inner_join(allx.normalMelt2[,c(-6,-7)], allcgids3[,c(3,5,6)], by=c("cgid"))
+
+distinct(cancerSpecificLimProbesMelt) -> cancerSpecificLimProbesMelt
+
+cancerSpecificLimProbesMelt$CancerType.y <- tolower(cancerSpecificLimProbesMelt$CancerType.y)
+
+cancerSpecificLimProbesMelt %>%
+  filter(CancerType.x==CancerType.y) -> cancerSpecificLimProbesMelt #should contain cancer specific probes with a column detailing hyper or hypo status.
+
+#repeat for allx.tumorMelt2
+#T for tumor
+cancerSpecificLimProbesMeltT <- inner_join(allx.tumorMelt2[,c(-6,-7)], allcgids3[,c(3,5,6)], by=c("cgid"))
+
+distinct(cancerSpecificLimProbesMeltT) -> cancerSpecificLimProbesMeltT
+
+cancerSpecificLimProbesMeltT$CancerType.y <- tolower(cancerSpecificLimProbesMeltT$CancerType.y)
+
+cancerSpecificLimProbesMeltT %>%
+  filter(CancerType.x==CancerType.y) -> cancerSpecificLimProbesMeltT 
+
+#-6,-7,-8,-10 - not needed columns, save ram.
+
+#cancerSpecificLimProbesMelt <- cancerSpecificLimProbesMelt[,c(-6,-7,-8,-10)]
+
+#cancerSpecificLimProbesMeltT <- cancerSpecificLimProbesMeltT[,c(-6,-7,-8,-10)]
+
+#SiteStatus of the normal data should just be normal, not hyper or hypo
+#cancerSpecificLimProbesMelt$SiteStatus <- rep("normal", nrow(cancerSpecificLimProbesMelt))
+
+cancerSpecificLimProbesMelt[,c(-8)] -> cancerSpecificLimProbesMelt
+
+cancerSpecificLimProbesMeltT[,c(-8)] -> cancerSpecificLimProbesMeltT
+
+cancerSpecificLimProbesMelt[,c(-5)] -> cancerSpecificLimProbesMelt
+
+cancerSpecificLimProbesMeltT[,c(-5)] -> cancerSpecificLimProbesMeltT
+
+cancerSpecificLimProbesMelt$HealthStatus <- rep("NT", nrow(cancerSpecificLimProbesMelt))
+
+cancerSpecificLimProbesMeltT$HealthStatus <- rep("TP", nrow(cancerSpecificLimProbesMeltT))
+
+#original calculation of mean beta
+rbind(cancerSpecificLimProbesMelt, cancerSpecificLimProbesMeltT) %>%
+    group_by(CancerType.x, variable, SiteStatus) %>%
+      summarise(meanBeta=mean(value), HealthStatus) -> meanBetaLimmaSplit
+
+distinct(meanBetaLimmaSplit) -> meanBetaLimmaSplit
+
+ggplot(meanBetaLimmaSplit, aes(x=CancerType.x, y=meanBeta)) + facet_grid(.~SiteStatus) + geom_boxplot(aes(fill=HealthStatus)) + theme( axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in limma cgid distinct to each cancer \nsplit by hypo/hyper") 
+
+ggplot(meanBetaLimmaSplit, aes(x=CancerType.x, y=meanBeta)) + facet_grid(.~SiteStatus) + geom_jitter(aes(color=HealthStatus))  + geom_boxplot(aes(fill=HealthStatus)) + theme( axis.text.x=element_text(angle=90)) + ggtitle("Mean Beta across TCGA cancers in limma cgid distinct to each cancer \nsplit by hypo/hyper") 
+
+#stats
+meanBetaLimmaSplit2 <- meanBetaLimmaSplit
+
+meanBetaLimmaSplit2 %>% group_by(CancerType.x, SiteStatus) %>% wilcox_effsize(meanBeta ~ HealthStatus) 
+
+meanBetaLimmaSplit2 %>% group_by(CancerType.x, SiteStatus) %>% wilcox_test(meanBeta ~ HealthStatus) 
+
+
+
+#save(meanBetaLimmaSplit, file="meanBetaLimmaSplit.Rda")
+
+#save(cancerSpecificLimProbesMelt, cancerSpecificLimProbesMeltT, file="cancerSpecificLimProbesMelt.RData")
+
+```
+
+```{r}
+#by sample abs(deltaBeta)
+
+
+lapply(bivFNNorm, function(j){
+  
+  rowMeans(j) -> k
+  
+  return(k)
+  
+}) -> NormRowMeansOg
+
+#brca
+apply(bivFNTum$brca, MARGIN = 2, function(h){
+  
+  h - NormRowMeansOg$brca -> k
+  
+  return(k)
+  
+}) -> a
+
+#coad
+apply(bivFNTum$coad, MARGIN = 2, function(h){
+  
+  h - NormRowMeansOg$coad -> k
+  
+  return(k)
+  
+}) -> b
+
+#gbm
+
+apply(bivFNTum$gbm, MARGIN = 2, function(h){
+  
+  h - NormRowMeansOg$gbm -> k
+  
+  return(k)
+  
+}) -> c
+
+#luad
+
+apply(bivFNTum$luad, MARGIN = 2, function(h){
+  
+  h - NormRowMeansOg$luad -> k
+  
+  return(k)
+  
+}) -> d
+
+#paad
+apply(bivFNTum$paad, MARGIN = 2, function(h){
+  
+  h - NormRowMeansOg$paad -> k
+  
+  return(k)
+  
+}) -> e
+
+list(a, b, c, d, e) -> sampleDeltaBeta
+
+setNames(sampleDeltaBeta, nm = c("brca", "coad", "gbm", "luad", "paad")) -> sampleDeltaBeta
+
+lapply(sampleDeltaBeta, function(g){
+  
+  apply(g, MARGIN = 2, abs, simplify = TRUE) -> h
+  
+  as.data.frame(h) -> h
+  
+  h$cgid <- row.names(h)
+  
+  return(h)
+  
+}) -> sampleDeltaBeta
+
+
+melt(sampleDeltaBeta, id.vars=c("cgid")) -> sampleDeltaBetaMelt
+
+sampleDeltaBetaMelt %>%
+  group_by(L1, variable) %>%
+    summarise(meanDelta=mean(value)) -> sdbMelt
+
+ggplot(sdbMelt, aes(x=L1, y=meanDelta, fill=L1)) + geom_jitter(aes(color=L1)) + geom_boxplot()
+
+ggplot(sdbMelt, aes(x=L1, y=meanDelta, fill=L1)) + geom_jitter(aes(color=L1)) + geom_boxplot() + geom_hline(yintercept = 0)
+
+
+```
+
+
