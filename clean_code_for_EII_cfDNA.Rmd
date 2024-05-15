@@ -1,0 +1,454 @@
+---
+title: "Clean_CodeforEII"
+author: "Austin"
+date: '2023-11-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(impute)
+library(zoo)
+library(Rtsne)
+library(stats)
+library(multtest)
+library(MASS)
+library(Boruta)
+library(mlbench)
+library(randomForest)
+library(pROC)
+library(sfsmisc)
+library(rgl)
+library(ggplot2)
+#library(ggplot2, lib.loc = "/home/austinjin/.conda/envs/r_4.2.2/lib/R/library")
+library(readxl)
+#library(readxl, lib.loc = "/home/austinjin/.conda/envs/r_4.2.2/lib/R/library")
+library(dplyr)
+#library(dplyr, lib.loc = "/home/austinjin/.conda/envs/r_4.2.2/lib/R/library")
+library(GenomicRanges)
+#library(reshape2, lib.loc = "/home/austinjin/.conda/envs/r_4.2.2/lib/R/library")
+library(reshape2)
+library(plotly)
+library(stringr)
+#library(stringr, lib.loc = "/home/austinjin/.conda/envs/r_4.2.2/lib/R/library")
+library(tidyr)
+library(splitstackshape)
+library(caret)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r read files}
+# read a list of data from bam files
+# load metadate of the sample including disease state, age and tissue type.
+reference_table <- read.csv("/home/austinjin/scratch4-heaswar1/Austin/EII/cfDNA_all_metadata.txt", sep = " ")
+
+files <- list.files(path = "/home/austinjin/scratch4-heaswar1/Austin/EII/results/cfDNA_all_runs/", pattern = "*_1_bismark_bt2_pe.deduplicated.bam.perReadMethylation_RLM.txt", full.names = TRUE)
+allfiles <- setNames(lapply(files, read.table, sep="\t"), gsub("*_1_bismark_bt2_pe.deduplicated.bam.perReadMethylation_RLM.txt", "", basename(files)))
+```
+
+```{r}
+# loading probes
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/get450kProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getImprintedProbes.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getMostVarTumorBivProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getmostVarTumAPProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/ctDNA_Breast_20/BoruutaSelected269CGI.RData")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getting450kProbeLocations.RData")
+
+#esBiv CGI
+probelocations$ProbeName <- row.names(probelocations)
+esBivCpGI_ProbesGenesTable <- inner_join(probelocations, esBivCpGI_ProbesGenesTable, by="ProbeName") 
+mostVarTum_ProbesGenesTable <- inner_join(probelocations, mostVarTum_ProbesGenesTable, by="ProbeName")
+
+#all CGIs
+ALL_CGI_Table <- inner_join(probelocations, CpGI_ProbesGenesTable, by="ProbeName")
+
+# limma
+limma_probe <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/limmaPredictorCgidJune23.txt")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getting450kProbeLocations.RData")
+probelocations$ProbeName <- row.names(probelocations)
+
+colnames(limma_probe) <- "ProbeName"
+limma_probe <- inner_join(CpGI_ProbesGenesTable, limma_probe, by = "ProbeName")
+limma_probe <- inner_join(probelocations, limma_probe, by = "ProbeName")
+
+#Boruta (Whole CGI and probesites)
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/ctDNA_Breast_20/BoruutaSelected269CGI.RData")
+MVT2CpGI_ProbesGenesTable <- inner_join(probelocations, MVT2_ProbesGenesTable2, by="ProbeName")
+MVT2CpGI_ProbesGenesTable <- MVT2CpGI_ProbesGenesTable[, -c(7)]
+MVT2CpGI_ProbesGenesTable_CGI <- MVT2CpGI_ProbesGenesTable[, c(5, 6)]
+MVT2CpGI_ProbesGenesTable_CGI[c("Type", "chr", "start", "end")] <- str_split_fixed(MVT2CpGI_ProbesGenesTable_CGI$Arbitrary_CpGI_Name, "-", n = 4)
+MVT2CpGI_ProbesGenesTable_CGI$start <- as.integer(MVT2CpGI_ProbesGenesTable_CGI$start)
+MVT2CpGI_ProbesGenesTable_CGI$end <- as.integer(MVT2CpGI_ProbesGenesTable_CGI$end)
+MVT2CpGI_ProbesGenesTable_CGI <- distinct(MVT2CpGI_ProbesGenesTable_CGI[, c(2, 3, 4, 5, 6)])
+
+#LimmaBoruta
+limma_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/limmaBorutaCgid.RData", header = T)
+limma_boruta_genetable <- inner_join(probelocations, limma_boruta, by = "ProbeName")
+#new limma
+new_limma <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/UnqiueFilteredLimmaCgidsAcrossTCGACancers.txt", header = F, col.names = "ProbeName")
+new_limma_genetable <- inner_join(probelocations, new_limma, by = "ProbeName")
+new_limma_genetable <- inner_join( new_limma_genetable,CpGI_ProbesGenesTable, by = "ProbeName")
+new_limma_genetable_whole <- new_limma_genetable[,c(5, 6)]
+new_limma_genetable_whole[c("Type", "chr", "start", "end")] <- str_split_fixed(new_limma_genetable_whole$Arbitrary_CpGI_Name, "-", n = 4)
+new_limma_genetable_whole$start <- as.integer(new_limma_genetable_whole$start)
+new_limma_genetable_whole$end <- as.integer(new_limma_genetable_whole$end)
+new_limma_genetable_whole <- distinct(new_limma_genetable_whole[, c(2, 3, 4, 5, 6)])
+#lungBoruta
+lung_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/BorutaLungSpecificCGI.txt", header = F, col.names = "Arbitrary_CpGI_Name")
+lung_limma_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/BorutaLimmaLungSpecificCGI.txt", header = F, col.names = "Arbitrary_CpGI_Name")
+lung_limma_boruta_genetable<- inner_join(CpGI_ProbesGenesTable, lung_limma_boruta, by = "Arbitrary_CpGI_Name")
+lung_limma_boruta_genetable<- inner_join(probelocations, lung_limma_boruta_genetable, by = "ProbeName")
+lung_boruta_genetable <- inner_join(CpGI_ProbesGenesTable, lung_boruta, by = "Arbitrary_CpGI_Name")
+lung_boruta_genetable <- inner_join(probelocations, lung_boruta_genetable, by = "ProbeName")
+
+# deeplearning paper probesites
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/deep_learning_probe_sites.Rda")
+probelocations$ProbeName <- row.names(probelocations)
+deep_learning_probe_sites$chr <- paste("chr", deep_learning_probe_sites$chr, sep = "")
+deep_learning_probe_sites$Arbitrary_CpGI_Name <- paste(deep_learning_probe_sites$chr, deep_learning_probe_sites$start, deep_learning_probe_sites$end, sep = "-")
+```
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+lapply(allfiles, function(u){
+  u$n_CpGs_unmeth <- u$V6 - u$V7
+  u$read_length <- u$V3 - u$V2
+  colnames(u) <- c("chr", "start", "end", "read_name", "CpG_pattern", "n_CpGs", "n_CpGs_methyl", "discordance_score", "transitions_score", "mean_methylation", "n_CpGs_unmeth", "read_length")
+  u$end <- u$start + 1 
+  return(u)
+}) -> allfiles
+
+#Extract all reads that located at the region of given probesites(or whole CGI)
+#And this one is for whole CGI
+
+bivProbe_CGI <- lapply(allfiles, function(y){
+  gr2 <- with(y, GRanges(chr, IRanges(start = start, end = end)))
+  gr3 <- with(MVT2CpGI_ProbesGenesTable_CGI, GRanges(chr, IRanges(start = start, end = end)))
+  hits = findOverlaps(gr2, gr3)
+  z <- cbind(y[queryHits(hits),], MVT2CpGI_ProbesGenesTable_CGI[subjectHits(hits),])
+  
+  colnames(z) <- c("chr", "start", "end", "read_name", "CpG_pattern", "n_CpGs", "n_CpGs_methyl", "discordance_score", "transitions_score", "mean_methylation", "n_CpGs_unmeth", "read_length", "Arbitrary_CpGI_Name", "Type", "ProbeChr", "ProbeStart", "ProbeEnd")
+  
+  return(z)
+})
+
+#And this one is for probesites
+bivProbe <- lapply(allfiles, function(y){
+  gr2 <- with(y, GRanges(chr, IRanges(start = start, end = end)))
+  gr3 <- with(ALL_CGI_Table, GRanges(chr, IRanges(start = start, end = end)))
+  hits = findOverlaps(gr2, gr3)
+  z <- cbind(y[queryHits(hits),], ALL_CGI_Table[subjectHits(hits),])
+  
+  colnames(z) <- c("chr", "start", "end", "read_name", "CpG_pattern", "n_CpGs", "n_CpGs_methyl", "discordance_score", "transitions_score", "mean_methylation", "n_CpGs_unmeth", "read_length", "ProbeChr", "ProbeStart", "ProbeEnd", "ProbeName", "GeneSymbol", "Arbitrary_CpGI_Name")
+  
+  return(z)
+})
+```
+
+```{r}
+#Processing the metadata
+colnames(reference_table)[1] <- "L1"
+reference_table <- reference_table[, c(1, 2, 31, 34, 35)]
+# Melt and reshape the list data
+mBivProbe <- melt(bivProbe, measure.vars = c("CpG_pattern"))
+mBivProbe <- inner_join(mBivProbe, reference_table, by = "L1")
+per_read_mBiv <- distinct(mBivProbe[, -c(11, 12, 13, 21)])
+colnames(per_read_mBiv)[22] <- "disease_state"
+##########
+read_group <- per_read_mBiv%>%
+  uncount(weights = n_CpGs, .id = "n", .remove = F) %>%
+  # g means unmethylated, and G means methylated.
+  mutate(readMeth = ifelse(substr(value, n, n) == "G", 1, 0)) %>%
+  group_by(read_name, Arbitrary_CpGI_Name, disease_state, L1) %>%
+  summarise(Var_read = var(readMeth), value, mean_methylation, L1) ->read_group
+#remove the duplicated rows
+read_group <- distinct(read_group)
+#Separate samples into two classes: tumor and normal, readd the number of CpG in each read.
+read_group <- read_group %>%
+  mutate(health_state = ifelse(grepl("stage", disease_state), "cancer", "normal")) %>%
+  mutate(num_CpG = str_length(value)) -> read_group
+#select reads with more than 4 CpGs.
+read_group <- read_group %>%
+  filter(num_CpG > 4) -> read_group
+#group by CGI sampleID and disease state, then calculate the mean variance in each CGI.
+CGI_group <- read_group %>%
+  group_by(Arbitrary_CpGI_Name, L1, disease_state) %>%
+  summarise(Arbitrary_CpGI_Name, L1,  reads = n(), Var_CGI = mean(Var_read)) -> CGI_group
+#remove duplicates in the dataset.
+CGI_group <- distinct(CGI_group)
+
+#calculate the coverage of CGI and their reads
+sample_group_cgi <- CGI_group %>%
+  group_by(L1, disease_state) %>%
+  summarise(L1, disease_state, CGIs = n(), total_reads = sum(reads), median = median(reads)) -> sample_group_cgi
+#remove duplicates
+sample_group_cgi <- distinct(sample_group_cgi)
+
+#group by sampleID and get squre root mean of CGI variance for each sample
+sample_group <- CGI_group %>%
+  group_by(L1) %>%
+  summarise(L1, rmVar = sqrt(sum(Var_CGI)/n()), disease_state) -> sample_group
+sample_group <- distinct(sample_group)
+
+
+ggplot(sample_group, aes(x=disease_state, y=rmVar, fill=disease_state)) + geom_point(pch = 21, position = position_jitterdodge()) + geom_boxplot() + stat_summary(fun.data = give.n, geom = "text", position = position_dodge(width = .75)) + theme(axis.text.x = element_text(angle=90)) + ggtitle("rmVar from ctDNA Lung cancer WGBS in 269 Boruta CGIs regions \nCpG > 4")
+
+```
+
+
+```{r PDF plot}
+# calculate the cumulative probability distribution based on VarRead
+PDF_dat_var <- read_group %>%
+  group_by(disease_state, Var_read) %>%
+  summarise(pdf_num = n()) %>%
+  group_by(disease_state) %>%
+  summarise(Var_read, pdf_num, sum = sum(pdf_num), pdf = pdf_num/sum, cdf = cumsum(pdf), ksd = KSd(sum), upper = pmin(cdf + ksd, 1), lower = pmax(cdf - ksd, 0)) -> PDF_dat_var
+# calculate the cumulative probability distribution based on Mean methylation
+PDF_dat_mean <- lung_read_group %>%
+  group_by(disease_state, mean_methylation) %>%
+  summarise(pdf_num = n()) %>%
+  group_by(disease_state) %>%
+  summarise(mean_methylation, pdf_num, sum = sum(pdf_num), pdf = pdf_num/sum, cdf = cumsum(pdf), ksd = KSd(sum), upper = pmin(cdf + ksd, 1), lower = pmax(cdf - ksd, 0)) -> PDF_dat_mean
+
+ggplot(data = PDF_dat_1, aes(x = Var_read, y = cdf, group = disease_state, color=disease_state)) + geom_step() + geom_point()  + ggtitle("CDF Step Plot based on variance per read of Boruta CGI cites")
+
+ggplot(data = PDF_dat_2, aes(x = mean_methylation, y = cdf, group = disease_state, color=disease_state)) + geom_step() + geom_point() + ggtitle("CDF Step Plot based on Mean Methylation per read of Boruta CGI cites")
+
+
+```
+
+```{r missing data imputation}
+# For breast read group data, it is necessary to reorder the label
+# breast_read_group$disease_state <- factor(breast_read_group$disease_state, c("health", "early breast cancer", "advanced breast cancer"))
+dat <- transform(lung_read_group, target_name = as.numeric(factor(disease_state)) -1)
+
+# Variance
+all_dat <- dcast(dat, L1 + target_name  ~ Arbitrary_CpGI_Name, value.var = "Var_read", fun.aggregate = mean)
+rownames(all_dat) <- all_dat$L1
+#dat_v <- all_dat[,which(colMeans(!is.na(all_dat)) > 0.5) ]
+#dat_v <- data.frame(lapply(dat_v, function(x) as.numeric(as.character(x))), check.names = F, row.names = dat_v$L1)
+dat_v <- t(all_dat[,-c(1)])
+# Using KNN imputation method to replace missing values
+imputed_dat_var <- impute.knn(as.matrix(dat_v))
+impute_dat_var <- as.data.frame(t(imputed_dat_var$data))
+
+# Mean_meth
+all_dat <- dcast(dat, L1 + target_name  ~ Arbitrary_CpGI_Name, value.var = "mean_methylation", fun.aggregate = mean)
+rownames(all_dat) <- all_dat$L1
+
+dat_m <- t(all_dat[,-c(1)])
+# Using KNN imputation method to replace missing values
+imputed_dat_mean <- impute.knn(as.matrix(dat_m))
+impute_dat_mean <- as.data.frame(t(imputed_dat_mean$data))
+```
+
+```{r cross validation method to tune the hyperparameters like ntrees, max_depth, max_nodes...}
+# Choose normal samples and patient with early staged tumor
+early_stage_dat <- impute_dat_var %>%
+  filter(target_name %in% c(0, 1, 2))
+early_stage_dat$target_name <- ifelse(early_stage_dat$target_name != 0, 1, 0)
+#unique(early_stage_dat$target_name)
+set.seed(321)
+# hold-out method for data partitioning, 80% of samples were assigned as training set, 20% data was used to tune the hyperparameter of the ML model.
+train.index <- createDataPartition(early_stage_dat$target_name, p = 0.8, list = FALSE)
+train <- early_stage_dat[ train.index,]
+validation  <- early_stage_dat[-train.index,]
+#train.control <- trainControl(method = "cv", number = 10)
+# Using Cross Validation method to separate trian data into training data and testing data
+flds <- createFolds(train$target_name, k = 5)
+split_up <- lapply(flds, function(ind, dat) dat[ind,], dat = train)
+unlist(lapply(split_up, nrow))
+test_cv <- lapply(seq(1, 5), function(ind, dat) dat[[ind]], dat = split_up)
+train_cv <- lapply(seq(1, 5), function(ind, dat){
+  A = seq(1, 5)
+  B = A[A!= ind]
+  dat_out <- bind_rows(dat[B])
+  return(dat_out)
+  }, dat = split_up)
+
+model <- lapply(seq(1, 5), function(ind, dat){
+  data_train <- dat[[ind]]
+  names(data_train) <- make.names(names(data_train))
+  data_train$target_name <- as.factor(data_train$target_name)
+  set.seed(111)
+  rf60_v <- randomForest(target_name ~ ., data = data_train, ntree = 2000)
+  return(rf60_v)
+}, dat = train_cv)
+
+validation_pred_prob <- lapply(seq(1, 5), function(ind, dat, models){
+  data_test <- dat
+  names(data_test) <- make.names(names(data_test))
+  data_test$target_name <- as.factor(data_test$target_name)
+  model <- models[[ind]]
+  data_test <- data_test[, -c(1)]
+  p_v <- predict(model, data_test, type = "prob")
+  return(p_v)
+}, dat = validation, models = model)
+
+Auc_list = c()
+for (i in seq(1, 5)){
+  predict_val <- validation_pred_prob[[i]]
+  label_val <- as.factor(validation$target_name)
+  ROC_rf_v <- roc(label_val, predict_val[,2])
+  ROC_rf_auc_v <- auc(ROC_rf_v)
+  Auc_list <- append(Auc_list, ROC_rf_auc_v)
+}
+print(mean(Auc_list))
+print(sqrt(var(Auc_list)))
+```
+
+```{r CV method to test performance}
+# prediction on the test data
+predicts <- lapply(seq(1, 5), function(ind, dat, models){
+  data_test <- dat[[ind]]
+  names(data_test) <- make.names(names(data_test))
+  data_test$target_name <- as.factor(data_test$target_name)
+  model <- models[[ind]]
+  data_test <- data_test[, -c(1)]
+  p_v <- predict(model, data_test)
+  return(p_v)
+}, dat = test_cv, models = model)
+
+predicts_prob <- lapply(seq(1, 5), function(ind, dat, models){
+  data_test <- dat[[ind]]
+  names(data_test) <- make.names(names(data_test))
+  data_test$target_name <- as.factor(data_test$target_name)
+  model <- models[[ind]]
+  data_test <- data_test[, -c(1)]
+  p_v <- predict(model, data_test, type = "prob")
+  return(p_v)
+}, dat = test_cv, models = model)
+
+confusionmatrixs <- lapply(seq(1, 5), function(ind, predicts_val, targets_val ){
+  predict_val <- predicts_val[[ind]]
+  
+  label_val <- as.factor(targets_val[[ind]]$target_name)
+  
+  confumatrix <- confusionMatrix(predict_val, label_val)
+  return(confumatrix)
+}, predicts_val = predicts, targets_val = test_cv)
+# print the confusion matrix for each part of the data.
+for( i in 1:5){
+  print(confusionmatrixs[[i]])
+}
+Auc_list = c()
+for (i in seq(1, 5)){
+  predict_val <- predicts_prob[[i]]
+  label_val <- as.factor(test_cv[[i]]$target_name)
+  ROC_rf_v <- roc(label_val, predict_val[,2])
+  ROC_rf_auc_v <- auc(ROC_rf_v)
+  Auc_list <- append(Auc_list, ROC_rf_auc_v)
+}
+# Mean AUC and 95% CI
+mean_value <- mean(Auc_list)
+#var(Auc_list)
+standard_error <- sd(Auc_list) / sqrt(length(Auc_list))
+alpha = 0.05
+degrees_of_freedom = length(Auc_list) - 1
+t_score = qt(p=alpha/2, df=degrees_of_freedom,lower.tail=F)
+margin_error <- t_score * standard_error
+lower_bound <- mean_value - margin_error
+upper_bound <- mean_value + margin_error
+mean_value
+lower_bound
+upper_bound
+```
+
+
+```{r hold-out method to test performance}
+a <- seq(1, 500, by =1)
+seeds <- sample(a, 10)
+Auc_list = c()
+
+for (i in seeds){
+  early_stage_dat <- impute_dat %>%
+  filter(target_name %in% c(0, 1, 2))
+  early_stage_dat$target_name <- ifelse(early_stage_dat$target_name != 0, 1, 0)
+  #unique(early_stage_dat$target_name)
+  set.seed(i)
+  train.index <- createDataPartition(early_stage_dat$target_name, p = 0.8, list = FALSE)
+  train <- early_stage_dat[ train.index,]
+  #train_dat <- train[, -c(1)]
+  test  <- early_stage_dat[-train.index,]
+  
+  names(train) <- make.names(names(train))
+  train$target_name <- as.factor(train$target_name)
+  names(test) <- make.names(names(test))
+  test$target_name <- as.factor(test$target_name)
+  test_dat <- test[, -c(1)]
+  label_val <- as.factor(test$target_name)
+  set.seed(111)
+  rf60_v <- randomForest(target_name ~ ., data = train, ntree = 2000)
+  p_v <- predict(rf60_v, test)
+  p_v_prob <- predict(rf60_v, test, type = "prob")
+  predict_val <- p_v
+  
+  #confumatrix <- confusionMatrix(predict_val, label_val)
+  #print(confumatrix)
+  ROC_rf_v <- roc(label_val, p_v_prob[,2])
+  ROC_rf_auc_v <- auc(ROC_rf_v)
+  Auc_list <- append(Auc_list, ROC_rf_auc_v)
+  
+}
+print(mean(Auc_list))
+print(sqrt(var(Auc_list)))
+
+
+```
+
+```{r AUC-ROC plot for VarRead and Mean Methylation}
+early_stage_dat_var <- impute_dat_var %>%
+filter(target_name %in% c(0, 1, 2))
+early_stage_dat_mean <- impute_dat_mean %>%
+filter(target_name %in% c(0, 1, 2))
+
+early_stage_dat_var$target_name <- ifelse(early_stage_dat_var$target_name != 0, 1, 0)
+early_stage_dat_mean$target_name <- ifelse(early_stage_dat_mean$target_name != 0, 1, 0)
+#unique(early_stage_dat$target_name)
+set.seed(100)
+train.index <- createDataPartition(early_stage_dat$target_name, p = 0.8, list = FALSE)
+train_var <- early_stage_dat_var[ train.index,]
+#train_dat <- train[, -c(1)]
+test_var  <- early_stage_dat_var[-train.index,]
+
+train_mean <- early_stage_dat_mean[ train.index,]
+#train_dat <- train[, -c(1)]
+test_mean  <- early_stage_dat_mean[-train.index,]
+
+names(train_var) <- make.names(names(train_var))
+train_var$target_name <- as.factor(train_var$target_name)
+names(test_var) <- make.names(names(test_var))
+test_var$target_name <- as.factor(test_var$target_name)
+test_var_dat <- test_var[, -c(1)]
+label_val_var <- as.factor(test_var$target_name)
+
+names(train_mean) <- make.names(names(train_mean))
+train_mean$target_name <- as.factor(train_mean$target_name)
+names(test_mean) <- make.names(names(test_mean))
+test_mean$target_name <- as.factor(test_mean$target_name)
+test_mean_dat <- test_mean[, -c(1)]
+label_val_mean <- as.factor(test_mean$target_name)
+
+set.seed(111)
+rf60_v <- randomForest(target_name ~ ., data = train_var, ntree = 2000)
+rf60_m <- randomForest(target_name ~ ., data = train_mean, ntree = 2000)
+p_v_prob <- predict(rf60_v, test_var_dat, type = "prob")
+p_m_prob <- predict(rf60_m, test_mean_dat, type = "prob")
+
+ROC_rf_me <- roc(label_val_mean, p_m_prob[,2])
+ROC_rf_auc_me <- auc(ROC_rf_me)
+ROC_rf_v <- roc(label_val_var, p_v_prob[, 2])
+ROC_rf_auc_v <- auc(ROC_rf_v)
+ggroc(list(Var_read = ROC_rf_v, Mean_meth = ROC_rf_me)) + ggtitle('ROC Curve of filtered Limma sites RF model prediction \nHealthy vs Cancer') + annotate("text", x = 0.75, y = 1, label = paste0("AUC = ", round(ROC_rf_auc_v, digits = 4)), color = "#F8766D") + annotate("text", x = 0.77, y = 0.5, label = paste0("AUC = ", round(ROC_rf_auc_me, digits = 4)), color = "#00BFC4") + geom_vline(xintercept = 0.95)
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
