@@ -1,0 +1,236 @@
+---
+title: "clean_code_for_EII_tissue"
+author: "Austin"
+date: "2024-05-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(readxl)
+library(dplyr)
+library(GenomicRanges)
+library(reshape2, lib.loc = "/home/austinjin/.conda/envs/r_4.1.3-2/lib/R/library")
+library(plotly)
+library(stringr)
+library(tidyr)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r read methylation call}
+MetaData_SAMPLE_RRBS <- read.csv("/home/austinjin/scratch4-heaswar1/Austin/EII/lung_liver_18_meta.txt")
+files <- list.files(path = "/home/austinjin/scratch4-heaswar1/Austin/EII/results/lung_liver_18/", pattern = "*_1_bismark_bt2_pe.deduplicated.bismark.cov.gz", full.names = TRUE)
+allfiles <- setNames(lapply(files, read.table, sep="\t"), gsub("_1_bismark_bt2_pe.deduplicated.bismark.cov.gz", "", basename(files)))
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r ref annotation}
+# loading probes
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/get450kProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getImprintedProbes.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getMostVarTumorBivProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getmostVarTumAPProbeAnnotations.Rda")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/ctDNA_Breast_20/BoruutaSelected269CGI.RData")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getting450kProbeLocations.RData")
+
+#esBiv CGI
+probelocations$ProbeName <- row.names(probelocations)
+esBivCpGI_ProbesGenesTable <- inner_join(probelocations, esBivCpGI_ProbesGenesTable, by="ProbeName") 
+mostVarTum_ProbesGenesTable <- inner_join(probelocations, mostVarTum_ProbesGenesTable, by="ProbeName")
+
+#all CGIs
+ALL_CGI_Table <- inner_join(probelocations, CpGI_ProbesGenesTable, by="ProbeName")
+
+# limma
+limma_probe <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/limmaPredictorCgidJune23.txt")
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/EII-450k-annotations/getting450kProbeLocations.RData")
+probelocations$ProbeName <- row.names(probelocations)
+
+colnames(limma_probe) <- "ProbeName"
+limma_probe <- inner_join(CpGI_ProbesGenesTable, limma_probe, by = "ProbeName")
+limma_probe <- inner_join(probelocations, limma_probe, by = "ProbeName")
+
+#Boruta (Whole CGI rather than probesites)
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/results/ctDNA_Breast_20/BoruutaSelected269CGI.RData")
+MVT2CpGI_ProbesGenesTable <- inner_join(probelocations, MVT2_ProbesGenesTable2, by="ProbeName")
+MVT2CpGI_ProbesGenesTable <- MVT2CpGI_ProbesGenesTable[, -c(7)]
+MVT2CpGI_ProbesGenesTable <- MVT2CpGI_ProbesGenesTable[, c(5, 6)]
+MVT2CpGI_ProbesGenesTable[c("Type", "chr", "start", "end")] <- str_split_fixed(MVT2CpGI_ProbesGenesTable$Arbitrary_CpGI_Name, "-", n = 4)
+MVT2CpGI_ProbesGenesTable$start <- as.integer(MVT2CpGI_ProbesGenesTable$start)
+MVT2CpGI_ProbesGenesTable$end <- as.integer(MVT2CpGI_ProbesGenesTable$end)
+MVT2CpGI_ProbesGenesTable <- distinct(MVT2CpGI_ProbesGenesTable[, c(2, 3, 4, 5, 6)])
+
+#LimmaBoruta
+limma_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/limmaBorutaCgid.RData", header = T)
+limma_boruta_genetable <- inner_join(probelocations, limma_boruta, by = "ProbeName")
+#new limma
+new_limma <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/UnqiueFilteredLimmaCgidsAcrossTCGACancers.txt", header = F, col.names = "ProbeName")
+new_limma_genetable <- inner_join(probelocations, new_limma, by = "ProbeName")
+new_limma_genetable <- inner_join( new_limma_genetable,CpGI_ProbesGenesTable, by = "ProbeName")
+new_limma_genetable_whole <- new_limma_genetable[,c(5, 6)]
+new_limma_genetable_whole[c("Type", "chr", "start", "end")] <- str_split_fixed(new_limma_genetable_whole$Arbitrary_CpGI_Name, "-", n = 4)
+new_limma_genetable_whole$start <- as.integer(new_limma_genetable_whole$start)
+new_limma_genetable_whole$end <- as.integer(new_limma_genetable_whole$end)
+new_limma_genetable_whole <- distinct(new_limma_genetable_whole[, c(2, 3, 4, 5, 6)])
+#lungBoruta
+lung_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/BorutaLungSpecificCGI.txt", header = F, col.names = "Arbitrary_CpGI_Name")
+lung_limma_boruta <- read.table(file = "/home/austinjin/scratch4-heaswar1/Austin/EII/BorutaLimmaLungSpecificCGI.txt", header = F, col.names = "Arbitrary_CpGI_Name")
+lung_limma_boruta_genetable<- inner_join(CpGI_ProbesGenesTable, lung_limma_boruta, by = "Arbitrary_CpGI_Name")
+lung_limma_boruta_genetable<- inner_join(probelocations, lung_limma_boruta_genetable, by = "ProbeName")
+lung_boruta_genetable <- inner_join(CpGI_ProbesGenesTable, lung_boruta, by = "Arbitrary_CpGI_Name")
+lung_boruta_genetable <- inner_join(probelocations, lung_boruta_genetable, by = "ProbeName")
+
+# deeplearning paper probesites
+load("/home/austinjin/scratch4-heaswar1/Austin/EII/deep_learning_probe_sites.Rda")
+probelocations$ProbeName <- row.names(probelocations)
+deep_learning_probe_sites$chr <- paste("chr", deep_learning_probe_sites$chr, sep = "")
+deep_learning_probe_sites$Arbitrary_CpGI_Name <- paste(deep_learning_probe_sites$chr, deep_learning_probe_sites$start, deep_learning_probe_sites$end, sep = "-")
+
+```
+
+
+```{r}
+# Set up column names and position for the intersection
+lapply(allfiles, function(u){
+  u$numReads <- u$V6 + u$V5
+  colnames(u) <- c("chr", "start", "end", "methPercent", "countMeth", "countUnmeth", "numReads")
+  u$end <- u$start + 1
+  return(u)
+}) -> allfiles
+
+# Find the methylation status at certain positions.
+bivProbe <- lapply(allfiles, function(y){
+  gr2 <- with(y, GRanges(chr, IRanges(start = start, end = end)))
+  gr3 <- with(new_limma_genetable, GRanges(chr, IRanges(start = start, end = end)))
+  hits = findOverlaps(gr2, gr3)
+  z <- cbind(y[queryHits(hits),], new_limma_genetable[subjectHits(hits),])
+  
+  colnames(z) <- c("chr", "start", "end", "methPercent", "countMeth", "countUnmeth", "numReads", "ProbeChr", "ProbeStart", "ProbeEnd", "ProbeName", "GeneSymbol", "Arbitrary_CpGI_Name")
+  
+  return(z)
+})
+```
+
+```{r}
+mBivProbe <- melt(bivProbe, measure.vars = c("methPercent"))
+mBivProbe <- inner_join(mBivProbe, MetaData_SAMPLE_RRBS, by = c("L1" = "Run"))
+mBivProbe <- mBivProbe[, -c(17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45)]
+#mBivProbe[c("type", "disease_state", "unkonwn", "library")] <- str_split_fixed(mBivProbe$Isolate, "\\\\, ", n =4)
+mBivProbe <- mBivProbe %>%
+  mutate(disease_state = gsub("^.*-", "", Isolate))
+mBivProbe <- distinct(mBivProbe)
+mBivProbe$cgid <- mBivProbe$ProbeName
+
+names(mBivProbe)[15] <- "SampleName"
+mBivProbe$value <- mBivProbe$value/100
+#new_limma_genetable$cgid <- new_limma_genetable$ProbeName
+new_limma_genetable$cgid <- new_limma_genetable$ProbeName
+#limma_boruta_genetable$cgid <- limma_boruta_genetable$ProbeName
+# Divide by disease status
+mBivProbeN <- mBivProbe[mBivProbe$disease_state == "normal", ]
+mBivProbeT <- mBivProbe[mBivProbe$disease_state != "normal", ]
+
+```
+
+
+```{r Method}
+rmVar <- function(data, mostvarcgid){
+  data %>%
+    filter(cgid %in% unique(mostvarcgid$cgid)) %>%
+    group_by(SampleName, disease_state, Arbitrary_CpGI_Name, Tissue) %>%
+    summarize(VarianceCGI = var(value, na.rm = T), numProbes = n(), disease_state, Tissue) -> a
+  
+  a <- na.omit(a)
+  
+  a <- a[a$numProbes >= 10,]
+  
+  a %>%
+    group_by(SampleName) %>%
+    summarise(rmVar=sqrt(sum(VarianceCGI/n())), disease_state, Tissue) -> a
+  a <- distinct(a)
+  return(a)
+}
+
+mhic <- function(data_N, data_T, LeastVarNormalcgid) {
+  data_N %>%
+    filter(cgid %in% unique(LeastVarNormalcgid$cgid)) %>%
+    group_by(SampleName, disease_state, Tissue) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.2 & value <= 0.8) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm), disease_state, Tissue) -> mhicNormal
+  
+  data_T %>% 
+    filter(cgid %in% unique(LeastVarNormalcgid$cgid)) %>%
+    group_by(SampleName, disease_state,Tissue) %>%
+    mutate(total=n()) %>%
+    filter(value >=0.2 & value <= 0.8) %>%
+    mutate(interm=n(), percentinterm=interm/total) %>%
+    summarise(percent=unique(percentinterm), disease_state, Tissue) -> mhicTumor
+  
+  rbind(mhicNormal, mhicTumor) -> mhicAll
+  
+  mhicAll <- distinct(mhicAll)
+  
+  return(mhicAll)
+}
+give.n <- function(x){
+   return(c(y = mean(x), label = length(x)))
+}
+# Mean Methylation
+mean_meth <- function(data, mostvarcgid){
+  data %>%
+  filter(cgid %in% unique(mostvarcgid$cgid)) %>%
+  group_by(SampleName, Arbitrary_CpGI_Name, disease_state, Tissue) %>%
+  summarise(Mean = mean(value), count = n(), disease_state, Tissue) -> a
+  a <- na.omit(a)
+  a <- a[a$count >= 10, ]
+  b <- a %>%
+    group_by(SampleName) %>%
+    summarise(mean_methylation = median(Mean), disease_state, Tissue, num = n()) -> b
+  b <- distinct(b)
+  return(b)
+}
+
+```
+
+
+```{r}
+# MHIC and VarCpGs
+mBivProbermVar <- rmVar(mBivProbe, new_limma_genetable)
+mBivProbeMhic <- mhic(mBivProbeN, mBivProbeT, new_limma_genetable)
+#Mean Methylation
+mBivProbe %>%
+  filter(cgid %in% unique(MVT2CpGI_ProbesGenesTable$cgid)) %>%
+  group_by(SampleName, Arbitrary_CpGI_Name, disease_state, Tissue) %>%
+  summarise(Mean = mean(value), count = n(), disease_state, Tissue) -> mean_summ
+mean_summ <- na.omit(mean_summ)
+mean_summ <- mean_summ[mean_summ$count >= 10, ]
+b <- mean_summ %>%
+  group_by(SampleName) %>%
+  summarise(mean_methylation = median(Mean), disease_state, Tissue, num = n()) -> b
+b <- distinct(b)
+```
+
+```{r}
+#Plot
+ggplot(mBivProbermVar, aes(x=Tissue, y=rmVar, fill=disease_state)) + facet_grid(.~Tissue, scales = "free")+ geom_boxplot()  + stat_summary(fun.data = give.n, geom = "text") + theme(axis.text.x = element_text(angle=90)) + ggtitle("rmVar from lung and liver WGBS in esBiv 450k probe regions")
+ggplot(mBivProbermVar, aes(x=disease_state, y=rmVar, fill=Tissue)) + facet_grid(.~disease_state, scales = "free")+ geom_point(pch = 21, position = position_jitterdodge()) + geom_boxplot() + stat_summary(fun.data = give.n, geom = "text") + theme(axis.text.x = element_text(angle=90)) + ggtitle("rmVar from lung and liver WGBS in esBiv 450k probe regions")
+ggplot(mBivProbeMhic, aes(x=disease_state, y=percent, fill=Tissue)) + facet_grid(.~disease_state, scales = "free")+ geom_point(pch = 21, position = position_jitterdodge()) + geom_boxplot()+stat_summary(fun.data = give.n, geom = "text") + theme(axis.text.x = element_text(angle=90)) + ggtitle("Mhic from lung and liver WGBS in esBiv 450k probe regions")
+ggplot(mBivProbeMhic, aes(x=disease_state, y=percent, fill=Tissue)) + facet_grid(.~disease_state, scales = "free")+geom_boxplot()  + stat_summary(fun.data = give.n, geom = "text") + theme(axis.text.x = element_text(angle=90)) + ggtitle("Mhic from lung and liver WGBS in esBiv 450k probe regions")
+
+ggplot(b, aes(x=disease_state, y = mean_methylation, fill = Tissue)) + facet_grid(.~disease_state, scales = "free") + geom_boxplot() + theme(axis.text.x = element_text(angle=90)) + ggtitle("mean methylation from lung and liver WGBS in esBiv 450k probe regions")
+mean_summ_r <- distinct(mean_summ)
+ggplot(b, aes(x=Tissue, y = mean_methylation, fill = disease_state)) + facet_grid(.~disease_state, scales = "free") + geom_boxplot() + theme(axis.text.x = element_text(angle=90)) + ggtitle("mean methylation from lung and liver WGBS in esBiv 450k probe regions")
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
