@@ -108,3 +108,5 @@ We show that when compared to the normal/healthy samples, even early-stage cance
 
 ![Figure3](https://github.com/sjthursby/EII/blob/main/images/ReadMeFigure3.png)
 
+Data used in the paper can be found [here](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA494975) and [here](https://ncbi.nlm.nih.gov/bioproject/534206). The former is the breast cancer dataset and the latter is the lung cancer dataset.
+
