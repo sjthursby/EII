@@ -1,0 +1,654 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-05-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(GenomicRanges)
+
+
+```
+
+```{r}
+
+#load in BRCA data from TCGA
+load("/scratch4/heaswar1/Sara/FromDesktop/EII/TCGA/GDC_TCGA_BRCA/RData/GDC_TCGA_BRCA_450k.Rda")
+
+#aim: overlap with the makers from cancerdetector
+
+#markers:
+
+read_excel("/scratch4/heaswar1/Sara/FromDesktop/EII/EIIAndCancerDetector/S.Table_1.xlsx") -> markers
+
+#need to get the methylation data within the markers
+#currently betaFUNNORM only has cgids, need manifest file.
+#can get annotations for 450k arrays here:
+load("/scratch4/heaswar1/Sara/FromDesktop/EII/EII_ProjectGit/forSara/get450kProbeAnnotations.Rda")
+
+anno <- as.data.frame(anno)
+
+#need column 1, 2, and 4
+
+anno[,c(1,2,4)] -> annoCut
+
+#need an end column for the cgids 
+annoCut$end <- annoCut$pos+1
+
+#need to reorganise the columns
+annoCut[,c(1,2,4,3)] -> annoCut
+
+colnames(annoCut) <- c("chr", "start", "end", "cgid")
+
+
+#overlapping the annocut file with the betaFunnorm
+
+betaFUNNORM$cgid <- rownames(betaFUNNORM)
+
+inner_join(annoCut, betaFUNNORM, by="cgid")[,c(1:4)] -> cgidsWithIntervals # only need to know where the cgids reside, I don't need the entire betaFUNNORM object
+
+#need to overlap with markers
+  gr2 <- with(markers, GRanges(chr, IRanges(start = start, end = end)))
+  
+  gr3 <- with(cgidsWithIntervals, GRanges(chr, IRanges(start = start, end = end)))
+  
+  hits = findOverlaps(gr2, gr3)
+  
+  z <- cbind(markers[queryHits(hits),], cgidsWithIntervals[subjectHits(hits),])
+  
+  rm(gr2, gr3, hits)
+  
+  #only need columns 1, 2, 3, 4 and 8
+  
+  z[,c(1,2,3,4,8)] -> matchedMarkers
+  
+  rm(z)
+
+load("/data/heaswar1/Sara/CancerDetector/CDTCGAbreast/step2Markers.RData") #load in step 2 markers.
+  
+#now since we have step 2 markers, we just need to subset matchedMarkers to those in step2markers
+  
+matchedMarkers[matchedMarkers$marker_index %in% step2markers$marker_index,] -> matchedMarkers
+
+rm(z)
+
+rm(anno, markers, CpGI_ProbesGenesTable, esBivCpGI_ProbesGenesTable, nonCpGI_ProbesGenesTable, AllIllumina_CpGI.probes, autosomalProbes, CpGI_TSS_Probes, esBivCpGIPromProbes, nonCpGI_TSS_Probes, OpenSea.probes, sexProbes, shelf.probes, shore.probes)
+
+```
+
+```{r}
+#Hari wants to make the shapes out of TCGA Lung instead of WGBS Lung, he says there is not enough WGBS Lung----
+
+#subset betaFUNNORM by the accepted markers and then melt.
+
+betaFUNNORM[betaFUNNORM$cgid %in% matchedMarkers$cgid,] -> betaFN
+
+
+
+#melt
+reshape2::melt(betaFN, id.vars=c("cgid")) -> betaFNM
+
+#value = beta between 0 and 1
+
+#split into N and T
+
+targets[targets$sampleTypeCode=="NT",1] -> normalSamples
+
+targets[targets$sampleTypeCode=="TP", 1] -> tumorSamples
+
+
+betaFNM %>%
+  mutate(sampleType = case_when(variable %in% normalSamples ~ "Normal",
+                                variable %in% tumorSamples ~ "Tumor")) -> betaFNM
+
+na.omit(betaFNM) -> betaFNM #there are NA values in the sampleType column, I suspect they are tumor recurrences
+
+#markersAvailMelt needs a marker_index column
+
+inner_join(betaFNM, matchedMarkers[,c(1,5)], by=c("cgid")) -> betaFNM
+
+#this resulting object appears to be markersAvailMelt in the other scripts.
+
+#save(betaFNM, file="/data/heaswar1/Sara/CancerDetector/markersAvailMeltTCGA.RData") # I overwrote this by accident, sorry May 27th 2025
+
+save(betaFNM, file="/data/heaswar1/Sara/CancerDetector/CDTCGAbreast/markersAvailMeltTCGA.RData")
+
+```
+
+```{r}
+
+library(MASS)
+
+# More robust function for beta distribution fitting
+fit_beta_distribution <- function(data, max_attempts = 5) {
+    # Function to adjust data away from 0 and 1
+    adjust_data <- function(x, eps = 1e-6) {
+        x[x <= 0] <- eps
+        x[x >= 1] <- 1 - eps
+        return(x)
+    }
+    
+    # Adjust input data
+    data_adj <- adjust_data(data)
+    
+    # Try different starting values
+    for(attempt in 1:max_attempts) {
+        tryCatch({
+            # Calculate starting values based on current attempt
+            x_bar <- mean(data_adj)
+            var_x <- var(data_adj)
+            
+            # Add increasing noise to prevent convergence issues
+            noise <- 0.1 * attempt
+            shape1 <- max(1, x_bar * ((x_bar * (1 - x_bar)/var_x) - 1) + noise)
+            shape2 <- max(1, (1 - x_bar) * ((x_bar * (1 - x_bar)/var_x) - 1) + noise)
+            
+            # Try fitting with current starting values
+            fit <- fitdistr(data_adj, "beta", 
+                          start = list(shape1 = shape1, shape2 = shape2),
+                          method = "BFGS")
+            
+            return(fit)
+        }, error = function(e) {
+            if(attempt == max_attempts) {
+                # If all attempts fail, return default values
+                return(list(estimate = c(shape1 = 1, shape2 = 1),
+                          method = "failed to converge"))
+            }
+        })
+    }
+}
+
+
+```
+
+```{r}
+
+betaFNM[,c(2:5)] -> betaFNM #getting rid of cgid column, not required
+
+distinct(betaFNM) -> betaFNM #checking its removal did not result in repeating rows
+
+betaFNM %>%
+      group_by(sampleType, marker_index) %>%
+       group_modify(~{
+      #starts <- calculate_beta_starts(valueAdj)
+    
+      #fit <- fitdistr(.$valueAdj, "beta", 
+       #           start = list(shape1 = starts$shape1, 
+        #                        shape2 = starts$shape2), 
+         #                        method="BFGS") #adding a different optimization method
+     
+      
+           fit <- fit_beta_distribution(.$value)
+      
+      
+          data.frame(
+          eta = fit$estimate["shape1"],
+          rho = fit$estimate["shape2"]
+   )
+}) -> betaShapesPerMarker
+
+#saved as
+save(betaShapesPerMarker, file="/data/heaswar1/Sara/CancerDetector/CDTCGAbreast/betaShapesPerMarkerTCGA.RData")
+
+
+
+
+```
+
+```{r}
+
+#removing all the data bar, betaShapesPerMarker, markers, step2markers
+#rm(list=setdiff(ls(), c("betaShapesPerMarker", "markers", "step2Markers")))
+
+#need to read in per read data
+
+#read in the per read measures-------
+
+files <- list.files(path="/scratch4/heaswar1/Austin/EII/results/ctDNA_Breast_20", pattern="*.perReadMethylation_RLM.txt", full.names=TRUE)
+
+allfiles <- setNames(lapply(files, read.table, sep="\t", header=F), gsub("_1_bismark_bt2_pe.deduplicated.bam.perReadMethylation_RLM.txt", "", basename(files)))
+
+
+allfiles1 <- allfiles  #this refers to ctDNA_Breast20
+
+files <- list.files(path="/scratch4/heaswar1/Austin/EII/results/ctDNA_breast_2", pattern="*.perReadMethylation_RLM.txt", full.names=TRUE)
+
+allfiles <- setNames(lapply(files, read.table, sep="\t", header=F), gsub("_1_bismark_bt2_pe.deduplicated.bam.perReadMethylation_RLM.txt", "", basename(files)))
+
+allfiles2 <- allfiles #$this refers to ctDNA_breast_2
+
+files <- list.files(path="/scratch4/heaswar1/Austin/EII/results/ctDNA_Breast_3", pattern="*.perReadMethylation_RLM.txt", full.names=TRUE)
+
+allfiles <- setNames(lapply(files, read.table, sep="\t", header=F), gsub("_1_bismark_bt2_pe.deduplicated.bam.perReadMethylation_RLM.txt", "", basename(files)))
+
+allfiles3 <- allfiles #this refers to ctDNA_Breast3
+
+#combine them all together
+allfiles <- c(allfiles1, allfiles2, allfiles3)
+
+rm(allfiles1, allfiles2, allfiles3)
+
+
+
+
+```
+
+```{r}
+
+
+lapply(allfiles, function(u){
+  u$n_CpGs_unmeth <- u$V6 - u$V7
+  
+  colnames(u) <- c("chr", "start", "end", "read_name", "CpG_pattern", "n_CpGs", "n_CpGs_methyl", "discordance_score", "transitions_score", "mean_methylation", "n_CpGs_unmeth")
+  
+  #u$end <- u$start + 1 
+  
+  u[,c(1:6)] -> u
+  
+  return(u)
+  
+}) -> allfiles
+
+
+
+#get only regions that overlap with markers
+lapply(allfiles, function(y){
+  
+  gr2 <- with(y, GRanges(chr, IRanges(start = start, end = end)))
+  
+  gr3 <- with(markers, GRanges(chr, IRanges(start = start, end = end)))
+  
+  hits = findOverlaps(gr2, gr3)
+  
+  z <- cbind(y[queryHits(hits),], markers[subjectHits(hits),])
+  
+  colnames(z) <- c("chr", "start", "end", "read_name", "CpG_pattern", "n_CpGs", "marker_index", "markerChr", "markerStart", "markerEnd")
+  
+  z[,c(4:7)] -> z
+  
+  return(z)
+  
+}) -> allfilesMarkers
+
+
+reshape2::melt(allfilesMarkers, id.vars=c("read_name", "CpG_pattern", "n_CpGs", "marker_index")) -> afMarkMelt
+#L1 is the sample name
+
+library(tidyr)
+
+afMarkMelt %>%
+  uncount(weights = n_CpGs, .id = "n", .remove = F) %>%
+  mutate(readMeth = ifelse(substr(CpG_pattern, n, n) == "G", 1, 0)) -> methPerRead #getting a vector of methylation values (0, 1) per CpG, per read
+
+#going to try and join methPerRead with betaShapesPerMarker by marker_index to try and get eta and rho per marker(with its normal and cancerous shapes)
+
+methPerRead[,c(1,4,5,6,7)] -> methPerRead
+
+#rm(afMarkMelt, allfiles, allfilesMarkers, markers, files)
+
+
+inner_join(methPerRead, betaShapesPerMarker, by="marker_index") -> methShapesJoined 
+
+distinct(methShapesJoined) -> methShapesJoined #just in case there are repeated rows from the joins/overlaps 
+
+#needs altered because the next step expects a list
+
+methShapesJoined %>%
+  group_split(L1) -> methShapesJoined
+
+
+
+#saving as methShapesJoinedList.RData
+
+save(methShapesJoined, file="/data/heaswar1/Sara/CancerDetector/CDTCGAbreast/methShapesJoinedList.RData")
+
+
+
+```
+
+```{r}
+
+# Then calculate likelihood for each read using the Beta-Bernoulli model
+# This will give probabilities like the 0.0009 example
+
+
+library(gsl) # For beta functions
+
+calculate_methylation_likelihood <- function(r_values, eta, rho) {
+    # Calculate numerator: product of B(r_j + eta, 1-r_j + rho)
+    numerator <- 1
+
+    
+    for(r_j in r_values) {
+        if(r_j == 1) {
+            numerator <- numerator * beta(1 + eta, rho)
+        } else {
+            numerator <- numerator * beta(eta, 1 + rho)
+        }
+    }
+    
+    # Calculate denominator: B(eta, rho)^3
+    denominator <- beta(eta, rho)^length(r_values)
+    
+    # Calculate final probability
+    probability <- numerator/denominator
+    
+    #return(probability)
+    
+    return(probability)
+    
+     
+}
+
+# Example usage:
+#eta_N <- 2.5  # Your calculated eta parameter for Normal class
+#rho_N <- 1.8  # Your calculated rho parameter for Normal class
+#r_values <- c(1, 0, 0)  # Example methylation status for 3 CpG sites
+
+#prob_N <- calculate_methylation_likelihood(r_values, eta_N, rho_N)
+
+
+
+```
+
+```{r}
+
+
+
+lapply(methShapesJoined, function(g){
+  
+  g %>%
+    filter(sampleType=="Normal") -> N
+  
+  g %>%
+    filter(sampleType=="Tumor") -> T
+  
+  inner_join(N, T, by="read_name") -> ntJoin
+  
+  distinct(ntJoin) -> ntJoin
+  
+  ntJoin[,c(1,9,11,12,7,8,14,15)] -> ntJoin #fixed to work with our breast cancer data
+  
+  colnames(ntJoin) <- c("read_name", "marker_index", "n", "readMeth", "eta_N", "rho_N", "eta_T", "rho_T")
+  
+  ntJoin %>%
+  group_by(read_name, marker_index) %>%
+  mutate(probN = calculate_methylation_likelihood(readMeth, unique(eta_N)[1], unique(rho_N)[1]), probT = calculate_methylation_likelihood(readMeth, unique(eta_T)[1], unique(rho_T)[1])) -> ntJoin
+  
+  return(ntJoin)
+  
+}) -> probs1
+
+save(probs1, file="/data/heaswar1/Sara/CancerDetector/CDTCGAbreast/probs1.RData")
+
+
+
+read.table("/scratch4/heaswar1/Austin/EII/results/ctDNA_Breast_20/ctDNA_Breast_20_meta.txt", sep=",", header=TRUE) -> sampleSheet1
+
+read.table("/scratch4/heaswar1/Austin/EII/ctDNA_breast_2_meta.txt", sep=",", header=TRUE) -> sampleSheet2
+
+read.table("/scratch4/heaswar1/Austin/EII/ctDNA_Breast_3_meta.txt", sep=",", header=TRUE) -> sampleSheet3
+
+
+#eventually wish to combine the sample sheets together
+
+#sampleSheet2 and samplesheet3 have 2 extra columns, "create_date", "version". They need to be removed before r bind
+sampleSheet2 <- sampleSheet2[,c(-26,-27)]
+
+sampleSheet3 <- sampleSheet3[,c(-26,-27)]
+
+#sampleSheet3 has a column labelled "TISSUE" as opposed to "Tissue" in the other dataframes, needs changed
+
+colnames(sampleSheet3)[29] <- "Tissue"
+
+rbind(sampleSheet1, sampleSheet2, sampleSheet3) -> sampleSheet
+
+#rm(sampleSheet1, sampleSheet2, sampleSheet3, mpr, mpr2)
+
+
+
+#setNames(probs1, sampleSheet) -> probs1 #this is not going to work here. Going to have to extract it from the read_name
+
+#gsub("\\.[0-9]*_[0-9]*_length=[0-9]*", "", probs1[[1]][1,1]) #to get SRR.... whatever the number is, this is a test case
+
+unlist(lapply(probs1, function(s){
+  
+  gsub("\\.[0-9]*_[0-9]*_length=[0-9]*", "", s[1,1]) -> b
+  
+  return(b)
+  
+})) -> sampleNames
+
+setNames(probs1, sampleNames) -> probs1
+
+
+#sampleSheet[, 1] -> sampleNames
+
+lapply(probs1, function(u){
+  
+  u[complete.cases(u),] -> u
+  
+  as.data.frame(u) -> u
+  
+  return(u)
+  
+}) -> probs1
+
+
+```
+
+
+```{r}
+#test-----
+#df_list <- list(probs1c$SRR15143245, probs1c$SRR15143247, probs1c$SRR15143248)
+
+#setNames(df_list, c("SRR15143245", "SRR15143247", "SRR15143248")) -> df_list
+
+
+df_list <- probs1
+
+```
+
+
+```{r alt_step3_onlyR}
+library(dplyr)
+library(tibble)
+library(purrr)
+
+# Predefine theta values
+theta_values <- seq(0, 0.999, by = 0.001)
+
+# Initialize results list
+results <- list()
+
+# Define chunk size to simulate pandas chunksize
+chunk_size <- 100000
+
+# Loop over each sample in df_list
+for (sample_id in names(df_list)) {
+  message("Processing sample: ", sample_id)
+
+  df_raw <- df_list[[sample_id]]
+
+  # Safely coerce to tibble and ungroup
+  df <- tryCatch({
+    df_raw %>%
+      as_tibble() %>%
+      ungroup() %>%
+      #select(probT, probN) %>%
+      .[,c("probT", "probN")] %>%
+      mutate(
+        probT = as.numeric(probT),
+        probN = as.numeric(probN)
+      ) %>%
+      filter(!is.na(probT), !is.na(probN))
+  }, error = function(e) {
+    message("  Skipped: error during cleaning - ", e$message)
+    return(NULL)
+  })
+
+  # Skip if df is NULL or empty
+  if (is.null(df) || nrow(df) == 0) {
+    message("  Skipped: no valid rows.")
+    next
+  }
+
+  max_theta_sum <- 0
+  max_theta_count <- 0
+  n <- nrow(df)
+
+  # Process in chunks
+  for (i in seq(1, n, by = chunk_size)) {
+    chunk <- df[i:min(i + chunk_size - 1, n), ]
+
+    # Compute theta matrix using outer product
+    theta_matrix <- outer(chunk$probT, theta_values, "*") +
+                    outer(chunk$probN, 1 - theta_values, "*")
+
+    # For each row, get the index of the max theta value
+    max_theta_indices <- apply(theta_matrix, 1, which.max)
+    max_theta_values <- theta_values[max_theta_indices]
+
+    # Update running sum and count
+    max_theta_sum <- max_theta_sum + sum(max_theta_values)
+    max_theta_count <- max_theta_count + length(max_theta_values)
+  }
+
+  # Store result if any valid rows were processed
+  if (max_theta_count > 0) {
+    avg_max_theta <- max_theta_sum / max_theta_count
+    results[[sample_id]] <- tibble(L1 = sample_id, max_theta = avg_max_theta)
+    message("  Done: avg_max_theta = ", round(avg_max_theta, 3))
+  } else {
+    message("  Skipped: no valid max_theta values.")
+  }
+}
+
+# Combine all valid results into a single data frame
+final_result <- bind_rows(results)
+
+save(final_result, file="/data/heaswar1/Sara/CancerDetector/newProbesTCGA/final_resultTCGA.RData")
+
+# Print or export final result
+print(final_result)
+```
+
+
+
+
+
+```{r}
+
+#make the boxplot------
+bind_rows(results) -> results 
+
+rm(chunk, df, df_list, df_raw, probs5, theta_matrix, avg_max_theta, chunk_size, i, max_theta_count, max_theta_indices, max_theta_sum, max_theta_values, n, sample_id, theta_values)
+
+results -> resultsAll
+
+#fixing samplesheet, adding a column detailing, healthy/tumor
+if_else(grepl("health", sampleSheet$Isolate), "Normal", "Tumor") -> sampleSheet$Group
+
+if_else(grepl("health", sampleSheet$Isolate), "Normal", 
+        if_else(grepl("early breast cancer", sampleSheet$Isolate), "Early Breast Cancer", "Advanced Breast Cancer")) -> sampleSheet$Stage
+
+#join with sample sheet
+inner_join(resultsAll, sampleSheet[,c(1,30,31)], by=c("L1"="Run")) -> resultsAll
+
+#make the plot
+library(ggplot2)
+
+ggplot(resultsAll, aes(x=Group, y=max_theta, fill=Group)) + geom_boxplot() + ggtitle("Cancer Detector Breast Cancer cfDNA")
+
+ggplot(resultsAll, aes(x= factor(Stage, levels=c("Normal", "Early Breast Cancer", "Advanced Breast Cancer")), y=max_theta, fill=Stage)) + geom_boxplot() + ggtitle("Cancer Detector Breast Cancer cfDNA. boxplot split") + scale_x_discrete(name="")
+
+
+```
+
+```{r}
+
+#make AUC
+
+#example
+# Example data (replace with your data)
+#scores <- c(3.2, 1.5, 4.0, 2.8, 0.5, 5.0)  # Predictor scores
+#labels <- c(0, 0, 1, 1, 0, 1)              # True labels (0/1)
+
+#in this case, 
+#scores needs to be created
+
+resultsAll$prediction <- if_else(resultsAll$max_theta > 0.1, 1, 0)
+
+#labels = resultsAll$ground.truth but it needs converted into 0 and 1
+
+resultsAll$GT <- if_else(resultsAll$Group == "Normal", 0, 1)
+
+scores <- resultsAll$prediction
+
+labels <- resultsAll$GT
+
+#Sort scores in descending order and reorder labels accordingly:
+ordered_indices <- order(-scores)  # Indices for descending order
+sorted_scores <- scores[ordered_indices]
+sorted_labels <- labels[ordered_indices]
+
+#Step 3: Calculate TPR and FPR
+#Iterate through thresholds (each unique score) and compute metrics:
+total_pos <- sum(labels)    # Total actual positives
+total_neg <- length(labels) - total_pos  # Total actual negatives
+
+# Initialize cumulative counters
+tp <- cumsum(sorted_labels == 1)  # Cumulative true positives
+fp <- cumsum(sorted_labels == 0)  # Cumulative false positives
+
+# Calculate TPR and FPR at each threshold (including endpoints)
+tpr <- c(0, tp / total_pos)       # Starts at (0,0)
+fpr <- c(0, fp / total_neg)       # Ends at (1,1)
+
+library(ggplot2)
+
+# Assume 'fpr' and 'tpr' are calculated as in previous steps
+specificity <- 1 - fpr
+
+ggplot(data.frame(Specificity = specificity, Sensitivity = tpr), 
+       aes(Specificity, Sensitivity)) +
+  geom_line(color = "blue") +
+  #geom_abline(intercept = 0.95, color = "black") +
+  geom_vline(xintercept = 0.95, color = "black") +
+  scale_x_reverse() +  # Reverse x-axis to show specificity
+  labs(x = "Specificity", y = "Sensitivity", title = "ROC Curve of CancerDetector Predictions in Breast cfDNA WGBS")
+
+
+```
+
+```{r}
+
+auc_value <- sum(diff(fpr) * (head(tpr, -1) + tail(tpr, -1)) / 2)
+print(auc_value)
+
+
+#going to add a confusion matrix
+
+library(caret)
+
+actual <-  as.factor(resultsAll$GT)
+
+predicted <- as.factor(resultsAll$prediction)
+
+result <- confusionMatrix(predicted, actual, positive="1")
+
+print(result$table)
+
+print(result$byClass)
+
+```
+
